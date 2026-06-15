@@ -43,18 +43,19 @@
   // Route a finished utterance: on-device transcription if opted in, else server.
   async function handleUtterance(audio) {
     if (localMode()) {
-      setStatus("transcribing on-device…");
+      setStatus("transcribing (on-device)…");
       try {
         const text = await window.NarratorLocalASR.transcribe(audio);
         if (text) await postText(text);
-        setStatus("● listening");
+        setStatus("● listening (on-device)");
         return;
       } catch (e) {
         console.error("on-device ASR failed, falling back to server:", e);
+        setStatus("on-device error — using server");
       }
     }
     sendFloat32(audio);
-    setStatus("transcribing…");
+    if (!localMode()) setStatus("transcribing (server)…");
   }
 
   let ws = null, myvad = null, listening = false;

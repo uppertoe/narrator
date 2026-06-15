@@ -21,7 +21,7 @@ RUN .venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('
 # Vendor the in-browser (transformers.js) Whisper model so it's served from our
 # own /static — on-device transcription with no third-party model fetch. Only the
 # q8-quantized encoder/decoder + configs (the files transformers.js needs).
-RUN .venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('onnx-community/whisper-base.en', local_dir='static/asr/models/onnx-community/whisper-base.en', allow_patterns=['*.json', 'onnx/encoder_model_quantized.onnx', 'onnx/decoder_model_merged_quantized.onnx'])"
+RUN .venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('onnx-community/whisper-tiny.en', local_dir='static/asr/models/onnx-community/whisper-tiny.en', allow_patterns=['*.json', 'onnx/encoder_model_quantized.onnx', 'onnx/decoder_model_merged_quantized.onnx'])"
 
 # --- runtime stage ---
 FROM python:3.13-slim

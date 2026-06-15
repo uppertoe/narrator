@@ -11,7 +11,9 @@ env.allowRemoteModels = false;
 env.allowLocalModels = true;
 env.localModelPath = "/static/asr/models/";
 
-const MODEL = "onnx-community/whisper-base.en";
+// tiny.en: ~2x faster than base.en on-device; Claude extraction backstops the
+// small accuracy difference. Vendored from our /static (see Dockerfile).
+const MODEL = "onnx-community/whisper-tiny.en";
 let pipePromise = null;
 
 function getPipe() {
@@ -29,7 +31,8 @@ window.NarratorLocalASR = {
   warmup() { return getPipe().then(() => true).catch(() => false); },
   async transcribe(float32) {
     const asr = await getPipe();
-    const out = await asr(float32, { language: "en", task: "transcribe" });
+    // English-only model: do NOT pass language/task (transformers.js rejects them).
+    const out = await asr(float32);
     return ((out && out.text) || "").trim();
   },
 };

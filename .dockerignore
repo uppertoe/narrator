@@ -13,3 +13,5 @@ deploy
 *.md
 narrator.db
 .DS_Store
+# Vendored ASR models are downloaded fresh in the build, not copied from host.
+static/asr/models
