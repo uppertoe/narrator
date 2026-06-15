@@ -18,6 +18,12 @@
 .utterance input { margin-bottom: 0; }
 .utterance button { width: auto; white-space: nowrap; }
 
+/* Push-to-talk */
+.listen { display: flex; align-items: center; gap: 0.6rem; margin: 0.4rem 0 0; }
+#listen-btn { width: auto; white-space: nowrap; touch-action: none; user-select: none; }
+#listen-btn.rec { background: #dc2626; border-color: #dc2626; color: #fff; }
+#transcript { font-style: italic; }
+
 /* Two-pane board: chart left, list right */
 .board {
   display: grid; grid-template-columns: 1fr 360px; gap: var(--gap);

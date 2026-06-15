@@ -27,14 +27,13 @@
   <button type="submit">Log</button>
 </form>
 <div class="listen">
-  <button type="button" id="listen-btn" class="outline" data-case-id="{{ case.id }}">● Listen</button>
-  <span id="listen-status" class="muted">off</span>
+  <button type="button" id="listen-btn" class="outline" data-case-id="{{ case.id }}">🎙 Hold to talk</button>
+  <span id="listen-status" class="muted">hold to talk</span>
   <span id="transcript" class="muted"></span>
 </div>
+<p class="hint muted">Hold the button or the Spacebar while you speak, release to log.</p>
 
 {% include "partials/board.html" %}
 
-<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web/dist/bundle.min.js"></script>
 <script src="/static/audio.js"></script>
 {% endblock %}
