@@ -17,26 +17,26 @@ from functools import lru_cache
 from app.drugs import DRUGS
 
 WHISPER_MODEL = os.environ.get("NARRATOR_WHISPER_MODEL", "base.en")
+WHISPER_BEAM = int(os.environ.get("NARRATOR_WHISPER_BEAM", "5"))
 
-_UNIT_WORDS = [
-    "micrograms", "microgram", "milligrams", "milligram", "millilitres",
-    "units", "millimoles", "per kilo per minute", "micrograms per kilo per minute",
-    "milligrams per kilo per hour", "per hour", "per minute",
-]
-_COMMAND_WORDS = [
-    "bolus", "infusion", "up to", "down to", "started", "stopped", "stop",
-    "given", "now", "bypass on", "bypass off", "cross clamp", "point",
-]
+# Benchmark (scripts/asr_bench.py) finding: biasing the decoder toward the drug
+# names via `hotwords` beats a long vocabulary `initial_prompt`, and base.en +
+# beam 5 + hotwords matched small.en for drug recall at ~3x the speed.
+_PHASE_TERMS = ["bypass", "cross-clamp", "cross clamp"]
 
 
-def _build_prompt() -> str:
+def _build_hotwords() -> str:
     drugs = [d.canonical for d in DRUGS]
     syns = [s for d in DRUGS for s in d.synonyms]
-    terms = ", ".join(drugs + syns + _UNIT_WORDS + _COMMAND_WORDS)
-    return f"Paediatric anaesthetic medication log. Vocabulary: {terms}."
+    return ", ".join(drugs + syns + _PHASE_TERMS)
 
 
-INITIAL_PROMPT = _build_prompt()
+HOTWORDS = _build_hotwords()
+
+# Kept for the benchmark/optional use; the live path uses hotwords instead.
+INITIAL_PROMPT = (
+    "Paediatric anaesthetic medication log. Vocabulary: " + HOTWORDS + "."
+)
 
 
 class ASR:
@@ -63,9 +63,9 @@ class FasterWhisperASR(ASR):
         segments, _info = self.model.transcribe(
             io.BytesIO(audio),
             language="en",
-            initial_prompt=INITIAL_PROMPT,
+            hotwords=HOTWORDS,     # bias toward drug names (see asr_bench.py)
             vad_filter=True,
-            beam_size=1,
+            beam_size=WHISPER_BEAM,
         )
         return " ".join(s.text.strip() for s in segments).strip()
 

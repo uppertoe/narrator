@@ -36,6 +36,12 @@ in an immutable audit trail.
 |---|---|---|
 | `ANTHROPIC_API_KEY` | _(unset)_ | If set, utterances are parsed by Claude; otherwise the naive parser is used. |
 | `NARRATOR_MODEL` | `claude-haiku-4-5` | Extraction model. Set to `claude-sonnet-4-6` / `claude-opus-4-8` for higher accuracy. |
+| `NARRATOR_WHISPER_MODEL` | `base.en` | faster-whisper ASR model. `small.en` may help in real theatre noise. |
+| `NARRATOR_WHISPER_BEAM` | `5` | ASR beam size. |
+
+ASR biases the decoder toward the drug names via faster-whisper `hotwords`
+(see `scripts/asr_bench.py` for the tuning benchmark — `base.en` + beam 5 +
+hotwords matched `small.en` for drug recall at ~3× the speed on clean audio).
 
 The deterministic validator (`validate.py`) is the safety source of truth
 regardless of which parser/model produced the candidate.
