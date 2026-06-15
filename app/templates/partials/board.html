@@ -1,0 +1,85 @@
+<div id="board" class="board">
+  <section class="chart-pane">
+    <div id="chart-scroll" class="chart-scroll">{{ chart_svg|safe }}</div>
+  </section>
+  <script>
+    (function () {  // keep the live (right) edge in view after each update
+      var s = document.getElementById('chart-scroll');
+      if (s) s.scrollLeft = s.scrollWidth;
+    })();
+  </script>
+
+  <aside class="list-pane">
+    <div id="editor"></div>
+    {% if notice %}<p class="flash">↻ {{ notice }}</p>{% endif %}
+
+    {% if pending %}
+    <section class="pending">
+      <h3>Pending review <span class="badge">{{ pending|length }}</span></h3>
+      {% for e in pending %}
+      <article class="ev ev-pending">
+        <div class="ev-main">
+          <span class="ev-time">{{ e.timestamp|hm(case.timezone) }}</span>
+          <span class="ev-desc">{% include "partials/_event_desc.html" %}</span>
+        </div>
+        {% if e.ambiguity_reason %}<p class="ev-flag">⚠ {{ e.ambiguity_reason }}</p>{% endif %}
+        {% if e.source_text %}<p class="ev-src">“{{ e.source_text }}”</p>{% endif %}
+        {% set choices = unit_choices(e.drug, e.kind.value) if e.drug else [] %}
+        {% set needs_unit = (e.kind.value == 'bolus' and not e.dose_unit) or
+                            (e.kind.value in ['infusion_start', 'infusion_rate_change'] and not e.rate_unit) %}
+        {% if choices and needs_unit %}
+        <div class="ev-units">
+          <span class="muted">Unit?</span>
+          {% for u in choices %}
+          <button class="sm" hx-post="/case/{{ case.id }}/events/{{ e.id }}/resolve-unit"
+                  hx-vals='{"unit": "{{ u }}"}' hx-target="#board" hx-swap="outerHTML">{{ u }}</button>
+          {% endfor %}
+        </div>
+        {% endif %}
+        <div class="ev-actions">
+          <button class="sm" hx-post="/case/{{ case.id }}/events/{{ e.id }}/accept"
+                  hx-target="#board" hx-swap="outerHTML">Confirm</button>
+          <button class="sm outline" hx-get="/case/{{ case.id }}/events/{{ e.id }}/edit"
+                  hx-target="#editor" hx-swap="innerHTML">Correct</button>
+          <button class="sm outline contrast" hx-post="/case/{{ case.id }}/events/{{ e.id }}/reject"
+                  hx-target="#board" hx-swap="outerHTML">Ignore</button>
+        </div>
+      </article>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    <section class="timeline-list">
+      <div class="list-head">
+        <h3>Timeline</h3>
+        <button class="sm" hx-get="/case/{{ case.id }}/add"
+                hx-target="#editor" hx-swap="innerHTML">+ add</button>
+      </div>
+      {% if accepted %}
+        {% for e in accepted %}
+        <article class="ev">
+          <div class="ev-main">
+            <span class="ev-time">{{ e.timestamp|hm(case.timezone) }}</span>
+            <span class="ev-desc">{% include "partials/_event_desc.html" %}</span>
+            <span class="ev-row-actions">
+              {% if e.kind_guessed and e.kind.value in ['bolus', 'infusion_start', 'infusion_rate_change'] %}
+              <a class="flip" hx-post="/case/{{ case.id }}/events/{{ e.id }}/flip-kind"
+                 hx-target="#board" hx-swap="outerHTML"
+                 title="Switch between bolus and rate change">↔ {{ 'rate' if e.kind.value == 'bolus' else 'bolus' }}</a>
+              {% endif %}
+              <a hx-get="/case/{{ case.id }}/events/{{ e.id }}/edit"
+                 hx-target="#editor" hx-swap="innerHTML" title="Edit">✎</a>
+              <a hx-delete="/case/{{ case.id }}/events/{{ e.id }}"
+                 hx-target="#board" hx-swap="outerHTML"
+                 hx-confirm="Delete this event? (kept in audit trail)" title="Delete">🗑</a>
+            </span>
+          </div>
+          {% if e.inferred_unit %}<p class="ev-flag subtle">unit inferred</p>{% endif %}
+        </article>
+        {% endfor %}
+      {% else %}
+        <p class="muted"><em>No events yet.</em></p>
+      {% endif %}
+    </section>
+  </aside>
+</div>

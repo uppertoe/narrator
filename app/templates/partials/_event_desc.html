@@ -1,0 +1,15 @@
+{%- if e.kind.value == "bolus" -%}
+  <strong>{{ e.drug or "?" }}</strong>
+  {{ e.dose_value if e.dose_value is not none else "?" }} {{ e.dose_unit or "" }}
+  {{ e.route or "" }} bolus
+{%- elif e.kind.value == "infusion_start" -%}
+  <strong>{{ e.drug or "?" }}</strong> infusion started →
+  {{ e.rate_value if e.rate_value is not none else "?" }} {{ e.rate_unit or "" }}
+{%- elif e.kind.value == "infusion_rate_change" -%}
+  <strong>{{ e.drug or "?" }}</strong> infusion →
+  {{ e.rate_value if e.rate_value is not none else "?" }} {{ e.rate_unit or "" }}
+{%- elif e.kind.value == "infusion_stop" -%}
+  <strong>{{ e.drug or "?" }}</strong> infusion stopped
+{%- elif e.kind.value == "phase" -%}
+  <strong>{{ e.phase_label or "Milestone" }}</strong>
+{%- endif -%}

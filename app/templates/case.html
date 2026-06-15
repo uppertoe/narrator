@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Narrator — case {{ case.id }}{% endblock %}
+{% block body %}
+<header class="case-header">
+  <div>
+    <a href="/" class="secondary">← Cases</a>
+    <strong>{{ case.patient_label or "Case " ~ case.id }}</strong>
+    <span class="muted">
+      {{ "%.1f kg"|format(case.weight_kg) if case.weight_kg else "no weight" }}
+      · started {{ case.started_at|hmm(case.timezone) }}
+      {% if case.anaesthetist %}· {{ case.anaesthetist }}{% endif %}
+      · {{ case.timezone }}
+    </span>
+  </div>
+  <div class="exports">
+    <a href="/case/{{ case.id }}/report" target="_blank" role="button" class="outline">PDF / print</a>
+    <a href="/case/{{ case.id }}/export.csv" role="button" class="outline">CSV</a>
+    <a href="/case/{{ case.id }}/export.json" role="button" class="outline">JSON</a>
+  </div>
+</header>
+
+<form class="utterance" hx-post="/case/{{ case.id }}/utterance"
+      hx-target="#board" hx-swap="outerHTML"
+      hx-on::after-request="this.reset(); this.text.focus()">
+  <input name="text" autocomplete="off" autofocus
+         placeholder="Type an utterance, e.g. “norad up to 0.2 mcg/kg/min” · “10 microg adrenaline now” · “stop the norad” · “bypass on”">
+  <button type="submit">Log</button>
+</form>
+<div class="listen">
+  <button type="button" id="listen-btn" class="outline" data-case-id="{{ case.id }}">● Listen</button>
+  <span id="listen-status" class="muted">off</span>
+  <span id="transcript" class="muted"></span>
+</div>
+
+{% include "partials/board.html" %}
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web/dist/bundle.min.js"></script>
+<script src="/static/audio.js"></script>
+{% endblock %}

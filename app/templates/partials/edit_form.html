@@ -1,0 +1,70 @@
+{% set is_edit = event is not none %}
+<form class="editor-form"
+      {% if is_edit %}
+        hx-put="/case/{{ case.id }}/events/{{ event.id }}"
+      {% else %}
+        hx-post="/case/{{ case.id }}/events"
+      {% endif %}
+      hx-target="#board" hx-swap="outerHTML">
+  <h4>{{ "Edit event" if is_edit else "Add event" }}</h4>
+
+  <div class="grid">
+    <label>Type
+      <select name="kind">
+        {% for k in kinds %}
+        <option value="{{ k }}" {% if is_edit and event.kind.value == k %}selected{% endif %}>{{ k }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Time
+      <input type="datetime-local" name="timestamp"
+             value="{{ event.timestamp|dtinput(case.timezone) if is_edit else '' }}">
+    </label>
+  </div>
+
+  <div class="grid">
+    <label>Drug
+      <input name="drug" list="drug-names" value="{{ event.drug or '' if is_edit else '' }}">
+    </label>
+    <label>Route
+      <input name="route" value="{{ event.route or 'IV' if is_edit else 'IV' }}">
+    </label>
+  </div>
+
+  <div class="grid">
+    <label>Dose
+      <input name="dose_value" type="number" step="any"
+             value="{{ event.dose_value if is_edit and event.dose_value is not none else '' }}">
+    </label>
+    <label>Dose unit
+      <input name="dose_unit" list="dose-units"
+             value="{{ event.dose_unit or '' if is_edit else '' }}">
+    </label>
+    <label>Rate
+      <input name="rate_value" type="number" step="any"
+             value="{{ event.rate_value if is_edit and event.rate_value is not none else '' }}">
+    </label>
+    <label>Rate unit
+      <input name="rate_unit" list="rate-units"
+             value="{{ event.rate_unit or '' if is_edit else '' }}">
+    </label>
+  </div>
+
+  <label>Milestone label (for phase events)
+    <input name="phase_label" value="{{ event.phase_label or '' if is_edit else '' }}"
+           placeholder="e.g. Bypass on, Cross-clamp off">
+  </label>
+  <label>Note
+    <input name="note" value="{{ event.note or '' if is_edit else '' }}">
+  </label>
+
+  <div class="ev-actions">
+    <button type="submit">{{ "Save" if is_edit else "Add" }}</button>
+    <button type="button" class="outline secondary"
+            onclick="document.getElementById('editor').innerHTML=''">Cancel</button>
+  </div>
+
+  <datalist id="drug-names">{% for d in DRUG_NAMES %}<option value="{{ d }}">{% endfor %}</datalist>
+  <datalist id="dose-units">{% for u in DOSE_UNITS %}<option value="{{ u }}">{% endfor %}</datalist>
+  <datalist id="rate-units">{% for u in RATE_UNITS %}<option value="{{ u }}">{% endfor %}</datalist>
+</form>

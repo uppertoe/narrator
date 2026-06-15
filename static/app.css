@@ -1,0 +1,77 @@
+:root { --gap: 1rem; }
+
+.container-fluid { max-width: 1400px; margin: 0 auto; padding: 0.5rem 1rem; }
+
+.case-header {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 1rem; flex-wrap: wrap; margin-bottom: 0.5rem;
+}
+.case-header .muted { margin-left: 0.5rem; }
+.exports { display: flex; gap: 0.4rem; }
+.exports [role=button] { padding: 0.25rem 0.6rem; font-size: 0.8rem; }
+
+.muted { color: var(--pico-muted-color); font-size: 0.85rem; }
+.hint { margin-top: 0.25rem; }
+
+/* Utterance bar */
+.utterance { display: flex; gap: 0.5rem; margin-bottom: 0; }
+.utterance input { margin-bottom: 0; }
+.utterance button { width: auto; white-space: nowrap; }
+
+/* Two-pane board: chart left, list right */
+.board {
+  display: grid; grid-template-columns: 1fr 360px; gap: var(--gap);
+  align-items: start; margin-top: 0.75rem;
+}
+@media (max-width: 900px) { .board { grid-template-columns: 1fr; } }
+
+.chart-pane {
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 8px; padding: 0.5rem; background: #fff; overflow: hidden;
+}
+.chart-scroll { overflow-x: auto; }
+.anaes-chart { display: block; }   /* true pixel width → scrolls when long */
+
+.list-pane { display: flex; flex-direction: column; gap: 0.75rem; }
+.list-pane h3 { font-size: 0.95rem; margin: 0; }
+.list-head { display: flex; justify-content: space-between; align-items: center; }
+
+.badge {
+  background: var(--pico-primary); color: #fff; border-radius: 999px;
+  font-size: 0.7rem; padding: 0.05rem 0.45rem; margin-left: 0.3rem;
+}
+
+/* Event cards */
+.ev {
+  border: 1px solid var(--pico-muted-border-color); border-radius: 6px;
+  padding: 0.4rem 0.55rem; margin-bottom: 0.4rem; font-size: 0.85rem;
+}
+.ev-pending { border-color: #f59e0b; background: #fffbeb; }
+.ev-main { display: flex; gap: 0.5rem; align-items: baseline; }
+.ev-time { font-variant-numeric: tabular-nums; color: #555; font-size: 0.78rem; }
+.ev-desc { flex: 1; }
+.ev-row-actions a { cursor: pointer; text-decoration: none; margin-left: 0.3rem; opacity: 0.6; }
+.ev-row-actions a:hover { opacity: 1; }
+.ev-row-actions a.flip { opacity: 0.9; font-size: 0.72rem; color: var(--pico-primary); }
+.ev-flag { color: #b45309; font-size: 0.75rem; margin: 0.25rem 0 0; }
+.ev-flag.subtle { color: #92400e; opacity: 0.7; }
+.ev-src { color: #666; font-style: italic; font-size: 0.75rem; margin: 0.2rem 0 0; }
+.ev-actions { display: flex; gap: 0.4rem; margin-top: 0.4rem; }
+
+button.sm, .sm { width: auto; padding: 0.2rem 0.6rem; font-size: 0.78rem; margin: 0; }
+
+.flash {
+  background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46;
+  border-radius: 6px; padding: 0.35rem 0.55rem; font-size: 0.78rem; margin: 0;
+}
+.ev-units { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.4rem; }
+.ev-units .muted { font-size: 0.78rem; }
+
+/* Inline editor */
+.editor-form {
+  border: 1px solid var(--pico-primary); border-radius: 8px;
+  padding: 0.75rem; margin-bottom: 0.5rem; background: var(--pico-card-background-color);
+}
+.editor-form h4 { margin: 0 0 0.5rem; font-size: 0.9rem; }
+.editor-form label { font-size: 0.78rem; }
+.editor-form input, .editor-form select { margin-bottom: 0.4rem; }
