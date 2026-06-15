@@ -23,7 +23,7 @@ from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 
 from app.asr import get_asr
-from app.chart import render_chart_svg
+from app.chart import render_chart, render_chart_combined
 from app.db import engine, get_session, init_db
 from app.drugs import candidate_units, forms_and_band
 from app.models import (
@@ -74,6 +74,7 @@ def _local(dt: datetime | None, tzname: str | None) -> datetime | None:
 templates.env.filters["hm"] = lambda dt, tz=None: _local(dt, tz).strftime("%H:%M:%S") if dt else ""
 templates.env.filters["hmm"] = lambda dt, tz=None: _local(dt, tz).strftime("%H:%M") if dt else ""
 templates.env.filters["dtlocal"] = lambda dt, tz=None: _local(dt, tz).strftime("%Y-%m-%d %H:%M") if dt else ""
+templates.env.filters["dtshort"] = lambda dt, tz=None: _local(dt, tz).strftime("%d %b %H:%M") if dt else ""
 templates.env.filters["dtinput"] = lambda dt, tz=None: _local(dt, tz).strftime("%Y-%m-%dT%H:%M") if dt else ""
 templates.env.globals["TIMEZONES"] = TIMEZONES
 
@@ -142,10 +143,12 @@ def board_context(session: Session, case: Case, notice: str | None = None) -> di
         [e for e in events if e.status == EventStatus.accepted],
         key=lambda e: e.timestamp,
     )
+    chart = render_chart(case, events)
     return {
         "case": case, "pending": pending, "accepted": accepted,
-        "chart_svg": render_chart_svg(case, events), "notice": notice,
-        "kinds": [k.value for k in EventKind],
+        "chart_labels": chart["labels"], "chart_plot": chart["plot"],
+        "chart_live_x": chart["live_x"],
+        "notice": notice, "kinds": [k.value for k in EventKind],
     }
 
 
@@ -301,15 +304,8 @@ def case_view(case_id: int, request: Request, session: Session = Depends(get_ses
     case = get_case(session, case_id)
     if not case:
         return RedirectResponse("/", status_code=303)
-    events = case_events(session, case_id)
-    pending = [e for e in events if e.status == EventStatus.pending]
-    accepted = sorted([e for e in events if e.status == EventStatus.accepted],
-                      key=lambda e: e.timestamp)
-    return templates.TemplateResponse(request, "case.html", {
-        "request": request, "case": case, "pending": pending,
-        "accepted": accepted, "chart_svg": render_chart_svg(case, events),
-        "kinds": [k.value for k in EventKind],
-    })
+    return templates.TemplateResponse(request, "case.html",
+                                      {"request": request, **board_context(session, case)})
 
 
 # --- Utterance entry (the Phase 1 text box) --------------------------------
@@ -660,5 +656,5 @@ def report(case_id: int, request: Request, session: Session = Depends(get_sessio
     events = sorted(case_events(session, case_id), key=lambda e: e.timestamp)
     return templates.TemplateResponse(request, "report.html", {
         "request": request, "case": case, "events": events,
-        "chart_svg": render_chart_svg(case, case_events(session, case_id)),
+        "chart_svg": render_chart_combined(case, case_events(session, case_id)),
     })

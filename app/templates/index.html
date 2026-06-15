@@ -33,20 +33,22 @@
 <article>
   <h2>Cases</h2>
   {% if cases %}
+  <div class="table-scroll">
   <table>
     <thead><tr><th>Started</th><th>Label</th><th>Weight</th><th>Anaesthetist</th><th></th></tr></thead>
     <tbody>
       {% for c in cases %}
       <tr>
-        <td>{{ c.started_at|dtlocal(c.timezone) }}</td>
+        <td class="nowrap">{{ c.started_at|dtshort(c.timezone) }}</td>
         <td>{{ c.patient_label or "—" }}</td>
-        <td>{{ "%.1f kg"|format(c.weight_kg) if c.weight_kg else "—" }}</td>
+        <td class="nowrap">{{ "%.1f kg"|format(c.weight_kg) if c.weight_kg else "—" }}</td>
         <td>{{ c.anaesthetist or "—" }}</td>
         <td><a href="/case/{{ c.id }}" role="button" class="outline">Open</a></td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
   <p><em>No cases yet.</em></p>
   {% endif %}

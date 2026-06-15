@@ -31,7 +31,7 @@
           old.outerHTML = msg.board;
           if (window.htmx) htmx.process(document.getElementById("board"));
           const s = document.getElementById("chart-scroll");
-          if (s) s.scrollLeft = s.scrollWidth;
+          if (s) s.scrollLeft = Math.max(0, (parseFloat(s.dataset.liveX || "0")) - s.clientWidth + 80);
         }
       }
       if (listening) setStatus(pttMode ? "hold to talk" : "● listening");

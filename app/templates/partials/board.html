@@ -1,11 +1,16 @@
 <div id="board" class="board">
   <section class="chart-pane">
-    <div id="chart-scroll" class="chart-scroll">{{ chart_svg|safe }}</div>
+    <div class="chart-frame">
+      <div class="chart-labels">{{ chart_labels|safe }}</div>
+      <div id="chart-scroll" class="chart-scroll" data-live-x="{{ chart_live_x }}">{{ chart_plot|safe }}</div>
+    </div>
   </section>
   <script>
-    (function () {  // keep the live (right) edge in view after each update
+    (function () {  // keep the latest event near the right edge after each update
       var s = document.getElementById('chart-scroll');
-      if (s) s.scrollLeft = s.scrollWidth;
+      if (!s) return;
+      var lx = parseFloat(s.dataset.liveX || '0');
+      s.scrollLeft = Math.max(0, lx - s.clientWidth + 80);
     })();
   </script>
 
@@ -37,8 +42,10 @@
         </div>
         {% endif %}
         <div class="ev-actions">
+          {% if not needs_unit %}
           <button class="sm" hx-post="/case/{{ case.id }}/events/{{ e.id }}/accept"
                   hx-target="#board" hx-swap="outerHTML">Confirm</button>
+          {% endif %}
           <button class="sm outline" hx-get="/case/{{ case.id }}/events/{{ e.id }}/edit"
                   hx-target="#editor" hx-swap="innerHTML">Correct</button>
           <button class="sm outline contrast" hx-post="/case/{{ case.id }}/events/{{ e.id }}/reject"
