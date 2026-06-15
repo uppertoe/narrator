@@ -13,10 +13,15 @@ RUN uv sync --frozen --no-dev
 COPY app ./app
 COPY static ./static
 
-# Pre-download the default Whisper model so the runtime needs no network and can
-# run on a read-only filesystem. Call the venv python directly — `uv run` would
-# re-sync and pull dev deps (e.g. playwright, ~136MB) back into the image.
+# Pre-download the default server Whisper model so the runtime needs no network
+# and can run on a read-only filesystem. Call the venv python directly — `uv run`
+# would re-sync and pull dev deps (e.g. playwright, ~136MB) back into the image.
 RUN .venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('base.en', device='cpu', compute_type='int8')"
+
+# Vendor the in-browser (transformers.js) Whisper model so it's served from our
+# own /static — on-device transcription with no third-party model fetch. Only the
+# q8-quantized encoder/decoder + configs (the files transformers.js needs).
+RUN .venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('onnx-community/whisper-base.en', local_dir='static/asr/models/onnx-community/whisper-base.en', allow_patterns=['*.json', 'onnx/encoder_model_quantized.onnx', 'onnx/decoder_model_merged_quantized.onnx'])"
 
 # --- runtime stage ---
 FROM python:3.13-slim
@@ -31,7 +36,8 @@ WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 COPY --from=build /opt/models /opt/models
 COPY app ./app
-COPY static ./static
+# static comes from the build stage — it includes the vendored transformers.js model.
+COPY --from=build /app/static ./static
 
 # Pre-create the data dir owned by the nonroot uid. An empty named volume mounted
 # here inherits this ownership, so the SQLite file is writable without root.

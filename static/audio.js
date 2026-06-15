@@ -8,8 +8,54 @@
   if (!btn) return;
   const statusEl = document.getElementById("listen-status");
   const transcriptEl = document.getElementById("transcript");
+  const localChk = document.getElementById("local-asr");
   const caseId = btn.dataset.caseId;
   const ASSETS = "/static/vad/";
+
+  const localMode = () => !!(localChk && localChk.checked && window.NarratorLocalASR && window.NarratorLocalASR.available);
+
+  // Preload the on-device model when the user opts in (first utterance isn't slow).
+  if (localChk) localChk.addEventListener("change", () => {
+    if (localChk.checked && window.NarratorLocalASR) {
+      setStatus("loading on-device model…");
+      window.NarratorLocalASR.warmup().then((ok) => setStatus(ok ? (listening ? "● listening" : "ready (on-device)") : "on-device unavailable — using server"));
+    }
+  });
+
+  // POST a transcript to the existing utterance endpoint and swap the board.
+  async function postText(text) {
+    const r = await fetch(`/case/${caseId}/utterance`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ text }),
+    });
+    const html = await r.text();
+    const old = document.getElementById("board");
+    if (old) {
+      old.outerHTML = html;
+      if (window.htmx) htmx.process(document.getElementById("board"));
+      const s = document.getElementById("chart-scroll");
+      if (s) s.scrollLeft = Math.max(0, (parseFloat(s.dataset.liveX || "0")) - s.clientWidth + 80);
+    }
+    if (transcriptEl) transcriptEl.textContent = text ? "“" + text + "”" : "";
+  }
+
+  // Route a finished utterance: on-device transcription if opted in, else server.
+  async function handleUtterance(audio) {
+    if (localMode()) {
+      setStatus("transcribing on-device…");
+      try {
+        const text = await window.NarratorLocalASR.transcribe(audio);
+        if (text) await postText(text);
+        setStatus("● listening");
+        return;
+      } catch (e) {
+        console.error("on-device ASR failed, falling back to server:", e);
+      }
+    }
+    sendFloat32(audio);
+    setStatus("transcribing…");
+  }
 
   let ws = null, myvad = null, listening = false;
   let stream = null, rec = null, chunks = [], pttMode = false, recording = false;
@@ -71,8 +117,12 @@
     myvad = await vad.MicVAD.new({
       baseAssetPath: ASSETS,
       onnxWASMBasePath: ASSETS,
+      // Browser DSP on the mic: cleaner input → better VAD + ASR (theatre noise).
+      additionalAudioConstraints: {
+        echoCancellation: true, noiseSuppression: true, autoGainControl: true,
+      },
       onSpeechStart: () => setStatus("listening — speech"),
-      onSpeechEnd: (audio) => { sendFloat32(audio); setStatus("transcribing…"); },
+      onSpeechEnd: (audio) => { handleUtterance(audio); },
     });
     myvad.start();
     listening = true;
@@ -92,7 +142,9 @@
   // --- Push-to-talk fallback (only if VAD init fails) ------------------------
   async function pttStart() {
     if (recording) return;
-    if (!stream) stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (!stream) stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+    });
     ensureWs();
     chunks = [];
     rec = new MediaRecorder(stream);
