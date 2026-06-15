@@ -22,10 +22,13 @@ LEFT = 132           # frozen label gutter width
 LEFTPAD = 12         # small pad before the first time tick in the plot
 RIGHT = 28
 TOP = 44             # time-axis band
-LANE_H = 52
+LANE_H = 60
 PX_PER_MIN = 14
 MIN_MINUTES = 60
 TICK_MIN = 5
+CHAR_W = 5.6         # approx label char width @ 11px for collision estimates
+LABEL_GAP = 4
+MAX_TIER = 2         # stacked label rows per side before falling back to hover/list
 
 _UNIT_ABBR = {
     "microgram": "mcg", "microgram/kg": "mcg/kg", "milligram": "mg",
@@ -56,7 +59,7 @@ def _num(v: float | None) -> str:
 
 
 def _baseline(idx: int) -> float:
-    return TOP + idx * LANE_H + LANE_H * 0.55
+    return TOP + idx * LANE_H + LANE_H * 0.5
 
 
 def _geometry(case: Case, events: list[Event]):
@@ -88,9 +91,49 @@ def _geometry(case: Case, events: list[Event]):
     return zi, meds, phases, origin, plot_min, lane_order, height, span_min
 
 
+def _place_labels(annos: list[dict]) -> list[tuple]:
+    """Collision-aware placement: alternate above/below, stack into tiers.
+
+    Returns (anno, band, tier); band is 'a' (above), 'b' (below), or None if it
+    couldn't be placed (caller leaves just the marker + hover title)."""
+    last: dict[tuple, float] = {}
+    out = []
+    for i, a in enumerate(sorted(annos, key=lambda d: d["x"])):
+        w = len(a["text"]) * CHAR_W + 2
+        xl, xr = a["x"] - w / 2, a["x"] + w / 2
+        order = ("a", "b") if i % 2 == 0 else ("b", "a")
+        placed = False
+        for band in order:
+            for tier in range(MAX_TIER):
+                key = (band, tier)
+                if xl > last.get(key, -1e9) + LABEL_GAP:
+                    last[key] = xr
+                    out.append((a, band, tier))
+                    placed = True
+                    break
+            if placed:
+                break
+        if not placed:
+            out.append((a, None, None))
+    return out
+
+
 def _plot_body(parts, *, meds, phases, lane_order, origin, plot_min, height,
-               zi, x_at_min, x_of, lane_x1):
+               zi, x_at_min, x_of, lane_x1, xmin, xmax):
     bottom = height - 10
+
+    def anchor_for(x, text):
+        half = (len(text) * CHAR_W + 2) / 2
+        if x - half < xmin:
+            return "start"
+        if x + half > xmax:
+            return "end"
+        return "middle"
+
+    def tloc(dt):
+        d = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+        return d.astimezone(zi).strftime("%H:%M")
+
     # time axis
     for i in range(0, plot_min + 1, TICK_MIN):
         gx = x_at_min(i)
@@ -108,6 +151,8 @@ def _plot_body(parts, *, meds, phases, lane_order, origin, plot_min, height,
         rate_points = [e for e in de if e.kind in (
             EventKind.infusion_start, EventKind.infusion_rate_change)]
         stops = [e for e in de if e.kind == EventKind.infusion_stop]
+        annos = []  # value labels to place (markers are always drawn)
+
         if rate_points:
             x_start = x_of(rate_points[0].timestamp)
             x_end = x_of(stops[-1].timestamp) if stops else lane_x1
@@ -116,22 +161,36 @@ def _plot_body(parts, *, meds, phases, lane_order, origin, plot_min, height,
             for e in rate_points:
                 ex = x_of(e.timestamp)
                 lab = f'{_num(e.rate_value)} {_abbr(e.rate_unit)}'.strip()
-                parts.append(f'<circle cx="{ex:.1f}" cy="{base:.1f}" r="4" fill="#2563eb"/>')
-                parts.append(f'<text x="{ex:.1f}" y="{base - 9:.1f}" font-size="11" '
-                             f'fill="#1d4ed8" text-anchor="middle">{escape(lab)}</text>')
+                parts.append(f'<circle cx="{ex:.1f}" cy="{base:.1f}" r="4" fill="#2563eb">'
+                             f'<title>{escape(tloc(e.timestamp))} · {escape(drug)} → {escape(lab)}</title></circle>')
+                annos.append({"x": ex, "text": lab, "color": "#1d4ed8"})
             for e in stops:
                 ex = x_of(e.timestamp)
                 parts.append(f'<text x="{ex:.1f}" y="{base + 5:.1f}" font-size="13" '
-                             f'fill="#b91c1c" text-anchor="middle">✕</text>')
+                             f'fill="#b91c1c" text-anchor="middle">✕'
+                             f'<title>{escape(tloc(e.timestamp))} · {escape(drug)} stopped</title></text>')
+
         for e in de:
             if e.kind != EventKind.bolus:
                 continue
             ex = x_of(e.timestamp)
             lab = f'{_num(e.dose_value)} {_abbr(e.dose_unit)}'.strip()
             parts.append(f'<text x="{ex:.1f}" y="{base + 5:.1f}" font-size="13" '
-                         f'fill="#7c3aed" text-anchor="middle">▼</text>')
-            parts.append(f'<text x="{ex:.1f}" y="{base - 9:.1f}" font-size="11" '
-                         f'fill="#6d28d9" text-anchor="middle">{escape(lab)}</text>')
+                         f'fill="#7c3aed" text-anchor="middle">▼'
+                         f'<title>{escape(tloc(e.timestamp))} · {escape(drug)} {escape(lab)} bolus</title></text>')
+            annos.append({"x": ex, "text": lab, "color": "#6d28d9"})
+
+        for a, band, tier in _place_labels(annos):
+            if band is None:
+                continue  # marker + hover title + timeline list still carry it
+            y = base - 11 - tier * 11 if band == "a" else base + 15 + tier * 11
+            if tier > 0:  # leader line connecting stacked label to its marker
+                ly = y + (6 if band == "a" else -8)
+                parts.append(f'<line x1="{a["x"]:.1f}" y1="{base:.1f}" x2="{a["x"]:.1f}" '
+                             f'y2="{ly:.1f}" stroke="#d4d4d4" stroke-width="1"/>')
+            anchor = anchor_for(a["x"], a["text"])
+            parts.append(f'<text x="{a["x"]:.1f}" y="{y:.1f}" font-size="11" '
+                         f'fill="{a["color"]}" text-anchor="{anchor}">{escape(a["text"])}</text>')
 
     for e in phases:
         ex = x_of(e.timestamp)
@@ -174,7 +233,8 @@ def render_chart(case: Case, events: list[Event]) -> dict:
     if lane_order or phases:
         _plot_body(parts, meds=meds, phases=phases, lane_order=lane_order,
                    origin=origin, plot_min=plot_min, height=height, zi=zi,
-                   x_at_min=x_at_min, x_of=x_of, lane_x1=plot_w - RIGHT)
+                   x_at_min=x_at_min, x_of=x_of, lane_x1=plot_w - RIGHT,
+                   xmin=2, xmax=plot_w - 2)
     else:
         parts.append(f'<text x="{plot_w / 2}" y="{height / 2}" font-size="13" '
                      f'fill="#999" text-anchor="middle">No events yet</text>')
@@ -202,7 +262,8 @@ def render_chart_combined(case: Case, events: list[Event]) -> str:
     if lane_order or phases:
         _plot_body(parts, meds=meds, phases=phases, lane_order=lane_order,
                    origin=origin, plot_min=plot_min, height=height, zi=zi,
-                   x_at_min=x_at_min, x_of=x_of, lane_x1=width - RIGHT)
+                   x_at_min=x_at_min, x_of=x_of, lane_x1=width - RIGHT,
+                   xmin=LEFT + 2, xmax=width - 2)
         for idx, drug in enumerate(lane_order):
             parts.append(f'<text x="{LEFT - 8}" y="{_baseline(idx) + 4:.1f}" font-size="12" '
                          f'fill="#222" text-anchor="end">{escape(drug)}</text>')

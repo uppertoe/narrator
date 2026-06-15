@@ -14,14 +14,21 @@ BASE = "http://127.0.0.1:8055"
 OUT = pathlib.Path("/tmp/narrator_ui")
 OUT.mkdir(exist_ok=True)
 
-SEED = [
-    "start noradrenaline at 0.1 micrograms per kilo per minute",
-    "10 micrograms of adrenaline now",
-    "propofol 15 mg per kilo per hour",
-    "propofol 10",                 # kind-guessed → flip control
-    "metaraminol 0.5 milligrams",
-    "bypass on",
-    "adrenaline 0.5",              # ambiguous unit → pending unit-choice card
+# Manual timestamped events (minute precision) to exercise label clustering.
+DAY = "2026-06-15"
+SEED_EVENTS = [
+    ("infusion_start", "noradrenaline", "10:00", None, None, 0.1, "microgram/kg/min"),
+    ("infusion_rate_change", "noradrenaline", "10:08", None, None, 0.2, "microgram/kg/min"),
+    ("infusion_rate_change", "noradrenaline", "10:09", None, None, 0.1, "microgram/kg/min"),
+    ("bolus", "adrenaline", "10:00", 10, "microgram", None, None),
+    ("bolus", "adrenaline", "10:01", 20, "microgram", None, None),
+    ("bolus", "adrenaline", "10:02", 10, "microgram", None, None),
+    ("infusion_start", "propofol", "10:00", None, None, 15, "mg/kg/hr"),
+    ("infusion_rate_change", "propofol", "10:05", None, None, 12, "mg/kg/hr"),
+    ("infusion_rate_change", "propofol", "10:06", None, None, 10, "mg/kg/hr"),
+    ("bolus", "metaraminol", "10:03", 0.5, "milligram", None, None),
+    ("bolus", "metaraminol", "10:04", 0.5, "milligram", None, None),
+    ("phase", None, "10:05", None, None, None, None),
 ]
 
 AUDIT_JS = """() => {
@@ -52,8 +59,13 @@ def seed() -> str:
     cid = c.post("/cases", data={"weight_kg": "18.4", "patient_label": "UI demo",
                                  "timezone": "Australia/Melbourne"},
                  follow_redirects=False).headers["location"].split("/")[-1]
-    for t in SEED:
-        c.post(f"/case/{cid}/utterance", data={"text": t})
+    for kind, drug, hm, dv, du, rv, ru in SEED_EVENTS:
+        c.post(f"/case/{cid}/events", data={
+            "kind": kind, "timestamp": f"{DAY}T{hm}", "drug": drug or "",
+            "dose_value": dv if dv is not None else "", "dose_unit": du or "",
+            "rate_value": rv if rv is not None else "", "rate_unit": ru or "",
+            "phase_label": "Bypass on" if kind == "phase" else "",
+        })
     return cid
 
 
