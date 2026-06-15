@@ -1,0 +1,54 @@
+# Reference wiring for running Narrator as an app in a server repo created from
+# server-instance-template. Copy this directory's files to apps/narrator/ in your
+# server repo, then add this line to the server's root docker-compose.yml:
+#
+#   include:
+#     - apps/narrator/docker-compose.yml
+#
+# Set DOMAIN in the server's root .env; the app is served at narrator.<DOMAIN>.
+services:
+  narrator:
+    # Template default. In your server repo, pin to a released tag by digest
+    # (Renovate's pinDigests does this automatically), e.g.
+    #   ghcr.io/uppertoe/narrator:v0.1.0@sha256:...
+    image: ghcr.io/uppertoe/narrator:latest
+    restart: unless-stopped
+    # CIS Docker §5 runtime hardening. Binds only an internal port (:8000) behind
+    # Caddy; writes only to the /data volume and a tmpfs /tmp.
+    user: "65532:65532"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    env_file:
+      - path: ./.env
+        required: false # keep `docker compose config` valid in CI without a real .env
+    environment:
+      - DOMAIN=${DOMAIN}
+      - NARRATOR_DATABASE_URL=sqlite:////data/narrator.db
+      # Claude extraction + ASR model overrides go in ./.env (see .env.example):
+      #   ANTHROPIC_API_KEY, NARRATOR_MODEL, NARRATOR_WHISPER_MODEL, NARRATOR_WHISPER_BEAM
+    volumes:
+      - narrator_data:/data
+    networks:
+      - caddy
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 1g          # base.en ASR + Python; raise if you switch to small.en
+    pids_limit: 256
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+    # NOTE: no published ports — only Caddy may reach the service.
+
+volumes:
+  narrator_data:
+
+networks:
+  caddy:
+    external: true
+    name: caddy

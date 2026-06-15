@@ -1,0 +1,12 @@
+# Narrator is served at narrator.<DOMAIN>. Caddy v2 reverse_proxy upgrades the
+# audio WebSocket (/ws/...) automatically — no extra config needed.
+#
+# To put the demo behind the auth gateway instead of leaving it public, enable
+# the auth app (apps/auth) and add the line  import protected  inside this block,
+# above the reverse_proxy. See scaffold/docs/07-auth.md.
+#
+# NOTE: keep comments in .caddy files free of { } braces -- the scaffold's
+# run-caddy.sh counts braces when assembling the Caddyfile.
+narrator.{$DOMAIN} {
+	reverse_proxy narrator:8000
+}

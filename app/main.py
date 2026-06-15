@@ -16,7 +16,9 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, Form, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import (
+    HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
@@ -273,6 +275,12 @@ def candidate_to_event(case: Case, c: Candidate) -> Event:
         ambiguity_reason=c.ambiguity_reason, inferred_unit=c.inferred_unit,
         kind_guessed=c.kind_guessed,
     )
+
+
+# --- Health ----------------------------------------------------------------
+@app.get("/healthz", response_class=PlainTextResponse)
+def healthz() -> str:
+    return "ok"
 
 
 # --- Pages -----------------------------------------------------------------

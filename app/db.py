@@ -1,11 +1,13 @@
 """SQLite engine + session helpers."""
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 
 from sqlmodel import Session, SQLModel, create_engine
 
-DATABASE_URL = "sqlite:///narrator.db"
+# Override in production (e.g. sqlite:////data/narrator.db on a writable volume).
+DATABASE_URL = os.environ.get("NARRATOR_DATABASE_URL", "sqlite:///narrator.db")
 
 engine = create_engine(
     DATABASE_URL,
