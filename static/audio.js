@@ -1,28 +1,30 @@
-// Narrator audio capture — push-to-talk over a WebSocket.
-// Hold the button (or the Spacebar) to record one utterance; release to send.
-// MediaRecorder produces a compressed blob (webm/ogg/mp4 by browser); the
-// server decodes it with faster-whisper. No external assets — robust in theatre.
+// Narrator audio capture — hands-free VAD over a WebSocket.
+// Assets are vendored under /static/vad/ (no CDN). onnxruntime-web runs
+// single-threaded so it needs no cross-origin isolation. Each detected utterance
+// is sent as 16 kHz WAV; the server transcribes and pushes back the board.
+// If VAD can't initialise, falls back to hold-to-talk (MediaRecorder).
 (function () {
   const btn = document.getElementById("listen-btn");
   if (!btn) return;
   const statusEl = document.getElementById("listen-status");
   const transcriptEl = document.getElementById("transcript");
   const caseId = btn.dataset.caseId;
+  const ASSETS = "/static/vad/";
 
-  let ws = null, stream = null, rec = null, chunks = [], recording = false, busy = false;
+  let ws = null, myvad = null, listening = false;
+  let stream = null, rec = null, chunks = [], pttMode = false, recording = false;
   const setStatus = (s) => { if (statusEl) statusEl.textContent = s; };
 
   function wsUrl() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     return `${proto}://${location.host}/ws/case/${caseId}`;
   }
-
   function ensureWs() {
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
     ws = new WebSocket(wsUrl());
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data);
-      if (transcriptEl) transcriptEl.textContent = msg.transcript ? "“" + msg.transcript + "”" : "(no speech)";
+      if (transcriptEl) transcriptEl.textContent = msg.transcript ? "“" + msg.transcript + "”" : "";
       if (msg.board) {
         const old = document.getElementById("board");
         if (old) {
@@ -32,19 +34,65 @@
           if (s) s.scrollLeft = s.scrollWidth;
         }
       }
-      setStatus("hold to talk");
+      if (listening) setStatus(pttMode ? "hold to talk" : "● listening");
     };
     ws.onclose = () => { ws = null; };
   }
 
-  async function ensureMic() {
-    if (!stream) stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    return stream;
+  function sendFloat32(audio) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(float32ToWav(audio));
   }
 
-  async function startRec() {
+  // 16 kHz mono Float32 → 16-bit PCM WAV
+  function float32ToWav(float32) {
+    const rate = 16000, n = float32.length;
+    const dv = new DataView(new ArrayBuffer(44 + n * 2));
+    const str = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+    str(0, "RIFF"); dv.setUint32(4, 36 + n * 2, true); str(8, "WAVE");
+    str(12, "fmt "); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true);
+    dv.setUint16(22, 1, true); dv.setUint32(24, rate, true);
+    dv.setUint32(28, rate * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+    str(36, "data"); dv.setUint32(40, n * 2, true);
+    let o = 44;
+    for (let i = 0; i < n; i++) {
+      const s = Math.max(-1, Math.min(1, float32[i]));
+      dv.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true); o += 2;
+    }
+    return dv.buffer;
+  }
+
+  // --- Hands-free VAD --------------------------------------------------------
+  async function startVad() {
+    setStatus("loading…");
+    if (!window.vad || !window.ort) throw new Error("vad assets missing");
+    ort.env.wasm.wasmPaths = ASSETS;   // load wasm/mjs locally
+    ort.env.wasm.numThreads = 1;       // single-threaded → no cross-origin isolation needed
+    ensureWs();
+    myvad = await vad.MicVAD.new({
+      baseAssetPath: ASSETS,
+      onnxWASMBasePath: ASSETS,
+      onSpeechStart: () => setStatus("listening — speech"),
+      onSpeechEnd: (audio) => { sendFloat32(audio); setStatus("transcribing…"); },
+    });
+    myvad.start();
+    listening = true;
+    btn.textContent = "■ Stop";
+    btn.classList.add("rec");
+    setStatus("● listening");
+  }
+  function stopVad() {
+    if (myvad) myvad.pause();
+    if (ws) ws.close();
+    listening = false;
+    btn.textContent = "● Listen";
+    btn.classList.remove("rec");
+    setStatus("off");
+  }
+
+  // --- Push-to-talk fallback (only if VAD init fails) ------------------------
+  async function pttStart() {
     if (recording) return;
-    await ensureMic();
+    if (!stream) stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     ensureWs();
     chunks = [];
     rec = new MediaRecorder(stream);
@@ -54,43 +102,35 @@
       if (blob.size && ws && ws.readyState === WebSocket.OPEN) {
         blob.arrayBuffer().then((b) => ws.send(b));
         setStatus("transcribing…");
-      } else {
-        setStatus("hold to talk");
       }
     };
-    rec.start();
-    recording = true;
-    btn.classList.add("rec");
-    setStatus("● recording — release to send");
+    rec.start(); recording = true; btn.classList.add("rec"); setStatus("● recording — release");
   }
-
-  function stopRec() {
+  function pttStop() {
     if (!recording) return;
-    recording = false;
-    btn.classList.remove("rec");
+    recording = false; btn.classList.remove("rec");
     if (rec && rec.state !== "inactive") rec.stop();
   }
+  function enablePttFallback(reason) {
+    pttMode = true;
+    console.warn("VAD unavailable, using push-to-talk:", reason);
+    btn.textContent = "🎙 Hold to talk";
+    setStatus("hold to talk (VAD unavailable)");
+    btn.addEventListener("pointerdown", (e) => { e.preventDefault(); pttStart().catch(err => setStatus("mic error")); });
+    btn.addEventListener("pointerup", pttStop);
+    btn.addEventListener("pointerleave", pttStop);
+    const typing = (t) => t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
+    document.addEventListener("keydown", (e) => {
+      if (e.code === "Space" && !e.repeat && !typing(e.target)) { e.preventDefault(); pttStart().catch(() => setStatus("mic error")); }
+    });
+    document.addEventListener("keyup", (e) => {
+      if (e.code === "Space" && !typing(e.target)) { e.preventDefault(); pttStop(); }
+    });
+  }
 
-  const press = (e) => {
-    e.preventDefault();
-    startRec().catch((err) => { console.error(err); setStatus("mic error"); });
-  };
-  const release = () => stopRec();
-
-  btn.addEventListener("pointerdown", press);
-  btn.addEventListener("pointerup", release);
-  btn.addEventListener("pointerleave", release);
-  btn.addEventListener("pointercancel", release);
-
-  // Spacebar push-to-talk (ignored while typing in a field).
-  const typing = (t) => t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT");
-  document.addEventListener("keydown", (e) => {
-    if (e.code === "Space" && !e.repeat && !typing(e.target)) {
-      e.preventDefault();
-      startRec().catch((err) => { console.error(err); setStatus("mic error"); });
-    }
-  });
-  document.addEventListener("keyup", (e) => {
-    if (e.code === "Space" && !typing(e.target)) { e.preventDefault(); stopRec(); }
+  btn.addEventListener("click", () => {
+    if (pttMode) return;                 // handled by pointer/space listeners
+    if (listening) { stopVad(); return; }
+    startVad().catch((err) => { stopVad(); enablePttFallback(err); });
   });
 })();

@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import mimetypes
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -39,6 +40,11 @@ async def lifespan(app: FastAPI):
     init_db()
     yield
 
+
+# Vendored VAD assets need correct MIME types: ES-module import requires a JS
+# type for .mjs; wasm streaming compile wants application/wasm.
+mimetypes.add_type("text/javascript", ".mjs")
+mimetypes.add_type("application/wasm", ".wasm")
 
 app = FastAPI(title="Narrator", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")

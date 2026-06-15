@@ -27,13 +27,15 @@
   <button type="submit">Log</button>
 </form>
 <div class="listen">
-  <button type="button" id="listen-btn" class="outline" data-case-id="{{ case.id }}">🎙 Hold to talk</button>
-  <span id="listen-status" class="muted">hold to talk</span>
+  <button type="button" id="listen-btn" class="outline" data-case-id="{{ case.id }}">● Listen</button>
+  <span id="listen-status" class="muted">off</span>
   <span id="transcript" class="muted"></span>
 </div>
-<p class="hint muted">Hold the button or the Spacebar while you speak, release to log.</p>
+<p class="hint muted">Click <em>Listen</em> once for hands-free capture — it auto-detects each utterance until you stop.</p>
 
 {% include "partials/board.html" %}
 
+<script src="/static/vad/ort.min.js"></script>
+<script src="/static/vad/bundle.min.js"></script>
 <script src="/static/audio.js"></script>
 {% endblock %}
