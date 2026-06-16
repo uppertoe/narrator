@@ -398,19 +398,21 @@ def _learn_convention(session: Session, case: Case, ev: Event,
     return notice
 
 
-def _mark_unparsed(session: Session, event: Event, raw: str) -> None:
-    """Transcription produced nothing usable — keep the timestamped placeholder as
-    an editable row so the clinician can enter it by hand. The timestamp is the
-    point of the app, so we never drop the row."""
+def _mark_noise(session: Session, event: Event, raw: str) -> None:
+    """The capture held no command (silence, theatre noise, or a Whisper
+    hallucination like "clap clap clap"). Keep the timestamped row as a muted
+    'noise' tile — dismissible, but editable into a real drug if it was actually a
+    missed order. The timestamp is the point of the app, so we never drop the row."""
     prev = event_to_dict(event)
-    event.status = EventStatus.pending
-    event.source_text = raw or "(no speech detected)"
-    event.requires_confirmation = True
-    event.ambiguity_reason = "Couldn't transcribe — tap to enter"
+    event.status = EventStatus.noise
+    event.drug = None
+    event.source_text = raw or "(no speech)"
+    event.requires_confirmation = False
+    event.ambiguity_reason = None
     event.confidence = 0.0
     session.add(event)
     record_revision(session, event, previous=prev, new=event_to_dict(event),
-                    by="model", reason="transcription empty")
+                    by="model", reason="no command detected (noise)")
     session.commit()
 
 
@@ -434,9 +436,15 @@ def process_utterance(session: Session, case: Case, text: str,
     conventions = load_conventions(session, case.id)
 
     cands = extract_candidates(text, state, case.weight_kg)
+    # No drug AND no number → not a recoverable command. For a voice capture that
+    # means silence/noise/hallucination: hold it as a 'noise' tile rather than a
+    # scary "unrecognised" row. (Anything with a drug or a number stays a real,
+    # flag-and-edit row.)
+    has_signal = any(c.drug for c in cands) or any(ch.isdigit() for ch in text)
+    if into_event is not None and not has_signal:
+        _mark_noise(session, into_event, raw)
+        return None
     if not cands:
-        if into_event is not None:
-            _mark_unparsed(session, into_event, raw)
         return None
 
     when = captured_at if captured_at is not None else (

@@ -26,6 +26,7 @@ class EventKind(str, enum.Enum):
 
 class EventStatus(str, enum.Enum):
     transcribing = "transcribing"  # provisional placeholder: timestamp locked, awaiting ASR
+    noise = "noise"           # captured sound held no command (no drug, no number)
     accepted = "accepted"
     pending = "pending"       # awaiting human confirm/correct
     corrected = "corrected"

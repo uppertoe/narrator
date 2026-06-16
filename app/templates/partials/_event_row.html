@@ -7,12 +7,14 @@
                      (e.kind.value in ['infusion_start', 'infusion_rate_change'] and not e.rate_unit) -%}
 {%- set choices = unit_choices(e.drug, e.kind.value) if e.drug else [] -%}
 <article id="event-{{ e.id }}"
-         class="ev{% if st == 'transcribing' %} ev-transcribing{% elif flagged %} ev-pending{% endif %}">
+         class="ev{% if st == 'transcribing' %} ev-transcribing{% elif st == 'noise' %} ev-noise{% elif flagged %} ev-pending{% endif %}">
   <div class="ev-main">
     <span class="ev-time">{{ e.timestamp|hm(case.timezone) }}</span>
     <span class="ev-desc">
       {%- if st == 'transcribing' -%}
         <span class="muted spin">🎤 transcribing…</span>
+      {%- elif st == 'noise' -%}
+        <span class="muted">🔇 noise</span>
       {%- elif not e.drug and e.kind.value != 'phase' -%}
         <span class="muted">Unrecognised — tap to enter</span>
       {%- else -%}

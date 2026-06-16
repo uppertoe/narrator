@@ -14,8 +14,9 @@ cid = loc.rstrip("/").split("/")[-1]
 # a couple of clean accepted events (chart + list content)
 c.post(f"/case/{cid}/utterance", data={"text": "noradrenaline up to 0.1 mcg/kg/min", "source": "typed"})
 c.post(f"/case/{cid}/utterance", data={"text": "10 microg adrenaline now", "source": "typed"})
-# a flagged row that surfaces "what we heard" (unrecognised) — editable in-line
-c.post(f"/case/{cid}/utterance", data={"text": "give some of that thing", "source": "asr"})
+# a noise tile via the real voice path: provisional, then resolve with no signal
+eid = c.post(f"/case/{cid}/utterance/provisional", data={}).json()["focus_id"]
+c.post(f"/case/{cid}/utterance/{eid}/audio", data={"audio": ""})
 # a live provisional placeholder (left unresolved → shows "transcribing…")
 c.post(f"/case/{cid}/utterance/provisional", data={})
 

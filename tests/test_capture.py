@@ -43,18 +43,31 @@ def test_resolve_fills_placeholder_and_keeps_timestamp():
     assert _age(ev, when) < 1             # capture time preserved
 
 
-def test_empty_transcript_keeps_editable_placeholder():
+def test_silence_becomes_noise_tile():
     s = mem_session(); case = _case(s)
     when = datetime.now(timezone.utc) - timedelta(seconds=30)
     ev = _placeholder(s, case, when)
 
     process_utterance(s, case, "", source="asr", into_event=ev)
     s.refresh(ev)
-    assert ev.status == EventStatus.pending
-    assert ev.requires_confirmation
+    assert ev.status == EventStatus.noise
+    assert not ev.requires_confirmation       # noise isn't a scary "needs attention" row
     assert ev.drug is None
     assert "no speech" in (ev.source_text or "").lower()
-    assert _age(ev, when) < 1             # timestamp survives a failed transcription
+    assert _age(ev, when) < 1                  # timestamp survives
+
+
+def test_noise_capture_becomes_editable_noise_tile():
+    # a Whisper hallucination on theatre noise: no drug, no number → noise tile
+    s = mem_session(); case = _case(s)
+    when = datetime.now(timezone.utc)
+    ev = _placeholder(s, case, when)
+
+    process_utterance(s, case, "clap clap clap clap", source="asr", into_event=ev)
+    s.refresh(ev)
+    assert ev.status == EventStatus.noise
+    assert ev.source_text == "clap clap clap clap"   # kept, editable into a drug
+    assert _age(ev, when) < 1
 
 
 def test_capture_payload_shape():
@@ -69,12 +82,15 @@ def test_capture_payload_shape():
     assert p["transcript"] == "propofol 20"
 
 
-def test_unrecognised_drug_surfaces_what_was_heard():
+def test_number_without_drug_stays_an_editable_command():
+    # has a number → a real (flag-and-edit) row, NOT noise: someone attempted a
+    # command we couldn't fully parse, so keep it prominent.
     s = mem_session(); case = _case(s)
     when = datetime.now(timezone.utc)
     ev = _placeholder(s, case, when)
 
-    process_utterance(s, case, "the patient looks stable", source="asr", into_event=ev)
+    process_utterance(s, case, "give 20 of that", source="asr", into_event=ev)
     s.refresh(ev)
+    assert ev.status != EventStatus.noise
     assert ev.requires_confirmation              # flagged, stays in the log
-    assert ev.source_text == "the patient looks stable"  # raw shown for correction
+    assert ev.source_text == "give 20 of that"   # raw shown for correction

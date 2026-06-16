@@ -158,6 +158,14 @@
       additionalAudioConstraints: {
         echoCancellation: true, noiseSuppression: true, autoGainControl: true,
       },
+      // Stricter gating so brief transients (a clap/tap/knock in theatre) don't
+      // fire a phantom capture: require confident, *sustained* speech, and bridge
+      // short mid-phrase pauses so one dictated order isn't split in two.
+      positiveSpeechThreshold: 0.6,
+      negativeSpeechThreshold: 0.4,
+      minSpeechFrames: 6,        // ignore very short sounds
+      redemptionFrames: 16,      // wait through brief pauses before ending
+      preSpeechPadFrames: 6,     // keep the word onset
       // Anchor the event to when speech *started* — closest to when the drug was
       // spoken — not when transcription finishes seconds later.
       onSpeechStart: () => { capturedAt = new Date().toISOString(); setStatus("listening — speech"); },
