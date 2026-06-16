@@ -1,0 +1,60 @@
+{#- One timeline row (view mode). Provisional, flagged and confirmed events all
+    render here and are edited in-line. Expects `e` (the event) and `case`. -#}
+{%- import "partials/_icons.html" as icons -%}
+{%- set st = e.status.value -%}
+{%- set flagged = (st == 'pending') or e.requires_confirmation -%}
+{%- set needs_unit = (e.kind.value == 'bolus' and not e.dose_unit) or
+                     (e.kind.value in ['infusion_start', 'infusion_rate_change'] and not e.rate_unit) -%}
+{%- set choices = unit_choices(e.drug, e.kind.value) if e.drug else [] -%}
+<article id="event-{{ e.id }}"
+         class="ev{% if st == 'transcribing' %} ev-transcribing{% elif flagged %} ev-pending{% endif %}">
+  <div class="ev-main">
+    <span class="ev-time">{{ e.timestamp|hm(case.timezone) }}</span>
+    <span class="ev-desc">
+      {%- if st == 'transcribing' -%}
+        <span class="muted spin">🎤 transcribing…</span>
+      {%- elif not e.drug and e.kind.value != 'phase' -%}
+        <span class="muted">Unrecognised — tap to enter</span>
+      {%- else -%}
+        {% include "partials/_event_desc.html" %}
+      {%- endif -%}
+    </span>
+    <span class="ev-row-actions">
+      {%- if st != 'transcribing' -%}
+        {% if flagged and not needs_unit %}
+        <a class="ev-act confirm" hx-post="/case/{{ case.id }}/events/{{ e.id }}/accept"
+           hx-target="#board" hx-swap="outerHTML" title="Looks right — confirm">{{ icons.check() }}</a>
+        {% endif %}
+        {% if e.kind_guessed and e.kind.value in ['bolus', 'infusion_start', 'infusion_rate_change'] %}
+        <a class="ev-act flip" hx-post="/case/{{ case.id }}/events/{{ e.id }}/flip-kind"
+           hx-target="#board" hx-swap="outerHTML"
+           title="Switch between bolus and rate change">{{ icons.flip() }}<span>{{ 'rate' if e.kind.value == 'bolus' else 'bolus' }}</span></a>
+        {% endif %}
+        <a class="ev-act" hx-get="/case/{{ case.id }}/events/{{ e.id }}/edit-inline"
+           hx-target="#event-{{ e.id }}" hx-swap="outerHTML" title="Edit">{{ icons.edit() }}</a>
+        <a class="ev-act danger" hx-delete="/case/{{ case.id }}/events/{{ e.id }}"
+           hx-target="#board" hx-swap="outerHTML"
+           hx-confirm="Delete this event? (kept in audit trail)" title="Delete">{{ icons.trash() }}</a>
+      {%- else -%}
+        {# even before transcription returns, the timestamp is editable #}
+        <a class="ev-act" hx-get="/case/{{ case.id }}/events/{{ e.id }}/edit-inline"
+           hx-target="#event-{{ e.id }}" hx-swap="outerHTML" title="Enter by hand">{{ icons.edit() }}</a>
+      {%- endif -%}
+    </span>
+  </div>
+
+  {%- if st != 'transcribing' -%}
+    {% if e.ambiguity_reason %}<p class="ev-flag">⚠ {{ e.ambiguity_reason }}</p>{% endif %}
+    {% if e.source_text %}<p class="ev-src">“{{ e.source_text }}”</p>{% endif %}
+    {% if choices and needs_unit %}
+    <div class="ev-units">
+      <span class="muted">Unit?</span>
+      {% for u in choices %}
+      <button class="sm" hx-post="/case/{{ case.id }}/events/{{ e.id }}/resolve-unit"
+              hx-vals='{"unit": "{{ u }}"}' hx-target="#board" hx-swap="outerHTML">{{ u }}</button>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if e.inferred_unit and not needs_unit %}<p class="ev-flag subtle">unit inferred</p>{% endif %}
+  {%- endif -%}
+</article>

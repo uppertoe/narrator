@@ -7,26 +7,29 @@ review column.
 """
 from __future__ import annotations
 
+import base64
 import csv
 import io
 import json
 import mimetypes
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import Depends, FastAPI, Form, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import (
     HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response,
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
-from starlette.concurrency import run_in_threadpool
 
 from app.asr import get_asr
 from app.chart import render_chart, render_chart_combined
-from app.db import engine, get_session, init_db
+from app.correct import correct_transcript
+from app.numbers import normalize_numbers
+from app.db import get_session, init_db
 from app.drugs import candidate_units, forms_and_band
 from app.models import (
     Case, CaseConvention, CreatedBy, Event, EventKind, EventRevision, EventStatus,
@@ -139,15 +142,17 @@ def case_events(session: Session, case_id: int,
 
 
 def board_context(session: Session, case: Case, notice: str | None = None) -> dict:
+    # One time-sorted timeline (no separate pending queue): provisional, flagged,
+    # and confirmed events all live here, edited in-line. The chart shows only
+    # resolved events with data — provisional placeholders are skipped.
     events = case_events(session, case.id)
-    pending = [e for e in events if e.status == EventStatus.pending]
-    accepted = sorted(
-        [e for e in events if e.status == EventStatus.accepted],
-        key=lambda e: e.timestamp,
-    )
-    chart = render_chart(case, events)
+    timeline = sorted(events, key=lambda e: e.timestamp)
+    chart_events = [e for e in events
+                    if e.status != EventStatus.transcribing
+                    and (e.drug or e.kind == EventKind.phase)]
+    chart = render_chart(case, chart_events)
     return {
-        "case": case, "pending": pending, "accepted": accepted,
+        "case": case, "timeline": timeline,
         "chart_labels": chart["labels"], "chart_plot": chart["plot"],
         "chart_live_x": chart["live_x"],
         "notice": notice, "kinds": [k.value for k in EventKind],
@@ -161,10 +166,27 @@ def board_response(request: Request, session: Session, case: Case,
                                       {"request": request, **ctx})
 
 
-def render_board_str(session: Session, case: Case, notice: str | None = None) -> str:
-    """Render the board partial to a string (for WebSocket push)."""
-    return templates.get_template("partials/board.html").render(
-        board_context(session, case, notice))
+def _row_html(case: Case, ev: Event) -> str:
+    """Render a single timeline row to a string (for surgical client updates)."""
+    return templates.get_template("partials/_event_row.html").render(
+        {"e": ev, "case": case})
+
+
+def capture_payload(session: Session, case: Case, *, focus_id: int | None = None,
+                    notice: str | None = None, transcript: str | None = None) -> dict:
+    """JSON for the voice paths: every current row + the chart, so the client can
+    update surgically — patching changed rows and the chart while leaving an
+    open in-line edit (or the +add form) untouched."""
+    events = sorted(case_events(session, case.id), key=lambda e: e.timestamp)
+    chart_events = [e for e in events if e.status != EventStatus.transcribing
+                    and (e.drug or e.kind == EventKind.phase)]
+    chart = render_chart(case, chart_events)
+    return {
+        "rows": [{"id": e.id, "html": _row_html(case, e)} for e in events],
+        "chart_labels": chart["labels"], "chart_plot": chart["plot"],
+        "chart_live_x": chart["live_x"],
+        "focus_id": focus_id, "notice": notice, "transcript": transcript or "",
+    }
 
 
 def load_conventions(session: Session, case_id: int) -> dict[tuple[str, str], str]:
@@ -263,24 +285,67 @@ def _learn_notice(drug: str, unit: str, backfilled: int, pending_done: int) -> s
     return f"{drug} = {unit} ({', '.join(parts)})"
 
 
-def candidate_to_event(case: Case, c: Candidate) -> Event:
-    status = EventStatus.pending if c.requires_confirmation else EventStatus.accepted
-    return Event(
-        case_id=case.id, timestamp=utcnow(), kind=c.kind, drug=c.drug,
-        dose_value=c.dose_value, dose_unit=c.dose_unit,
-        rate_value=c.rate_value, rate_unit=c.rate_unit, route=c.route,
-        phase_label=c.phase_label, source_text=c.source_text,
-        confidence=c.confidence, status=status, created_by=CreatedBy.model,
-        requires_confirmation=c.requires_confirmation,
-        ambiguity_reason=c.ambiguity_reason, inferred_unit=c.inferred_unit,
-        kind_guessed=c.kind_guessed,
-    )
+# How far a client-supplied capture time may stray from server time before we
+# distrust the device clock. Generous past window (long cases); tiny future skew.
+_TS_PAST = timedelta(hours=6)
+_TS_FUTURE = timedelta(minutes=2)
+
+
+def parse_client_ts(value: str | None) -> datetime | None:
+    """Capture time from the client (ISO 8601), normalised to UTC.
+
+    Accuracy of timestamps is this app's whole point, so we anchor events to when
+    the audio was captured on-device, not when the server got around to parsing
+    it. Returns None (→ caller falls back to server time) for missing/garbage
+    values or an implausible device clock."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    dt = (dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None
+          else dt.astimezone(timezone.utc))
+    now = utcnow()
+    if dt > now + _TS_FUTURE or dt < now - _TS_PAST:
+        return None
+    return dt
+
+
+def _assign_candidate_fields(ev: Event, c: Candidate) -> Event:
+    """Copy a parsed candidate onto an event, preserving id/case/timestamp.
+
+    Used both to build a fresh event and to fill a provisional placeholder in
+    place (so its locked capture timestamp survives)."""
+    ev.kind = c.kind
+    ev.drug = c.drug
+    ev.dose_value, ev.dose_unit = c.dose_value, c.dose_unit
+    ev.rate_value, ev.rate_unit = c.rate_value, c.rate_unit
+    ev.route, ev.phase_label = c.route, c.phase_label
+    ev.source_text, ev.confidence = c.source_text, c.confidence
+    ev.created_by = CreatedBy.model
+    ev.status = EventStatus.pending if c.requires_confirmation else EventStatus.accepted
+    ev.requires_confirmation = c.requires_confirmation
+    ev.ambiguity_reason = c.ambiguity_reason
+    ev.inferred_unit = c.inferred_unit
+    ev.kind_guessed = c.kind_guessed
+    return ev
+
+
+def candidate_to_event(case: Case, c: Candidate, when: datetime | None = None) -> Event:
+    ev = Event(case_id=case.id, timestamp=when or utcnow(), kind=c.kind)
+    return _assign_candidate_fields(ev, c)
 
 
 # --- Health ----------------------------------------------------------------
 @app.get("/healthz", response_class=PlainTextResponse)
 def healthz() -> str:
     return "ok"
+
+
+@app.get("/favicon.ico")
+def favicon() -> Response:
+    return Response(status_code=204)
 
 
 # --- Pages -----------------------------------------------------------------
@@ -317,45 +382,140 @@ def case_view(case_id: int, request: Request, session: Session = Depends(get_ses
 
 
 # --- Utterance entry (the Phase 1 text box) --------------------------------
-def process_utterance(session: Session, case: Case, text: str) -> str | None:
+def _learn_convention(session: Session, case: Case, ev: Event,
+                      cand: Candidate, conventions: dict) -> str | None:
+    """A spoken explicit unit teaches the case convention + backfills earlier guesses."""
+    scope = scope_of(ev.kind)
+    unit = (ev.dose_unit if scope == "bolus" else ev.rate_unit) if scope else None
+    notice = None
+    if cand.unit_source == "explicit" and scope and unit and ev.drug:
+        if upsert_convention(session, case.id, ev.drug, scope, unit):
+            bf = backfill_unit(session, case.id, ev.drug, scope, unit)
+            pend = apply_convention_to_pending(
+                session, case.id, ev.drug, scope, unit, exclude_id=ev.id)
+            notice = _learn_notice(ev.drug, unit, bf, pend)
+        conventions[(ev.drug, scope)] = unit
+    return notice
+
+
+def _mark_unparsed(session: Session, event: Event, raw: str) -> None:
+    """Transcription produced nothing usable — keep the timestamped placeholder as
+    an editable row so the clinician can enter it by hand. The timestamp is the
+    point of the app, so we never drop the row."""
+    prev = event_to_dict(event)
+    event.status = EventStatus.pending
+    event.source_text = raw or "(no speech detected)"
+    event.requires_confirmation = True
+    event.ambiguity_reason = "Couldn't transcribe — tap to enter"
+    event.confidence = 0.0
+    session.add(event)
+    record_revision(session, event, previous=prev, new=event_to_dict(event),
+                    by="model", reason="transcription empty")
+    session.commit()
+
+
+def process_utterance(session: Session, case: Case, text: str,
+                      source: str = "typed", captured_at: datetime | None = None,
+                      into_event: Event | None = None) -> str | None:
     """Parse an utterance into validated events; learn/backfill conventions.
 
-    Shared by the typed-text route and the audio WebSocket. Returns a subtle
-    notice if a convention correction happened."""
-    state = build_state(case_events(session, case.id))
+    Shared by the typed-text route and the audio resolve path. For ASR text we
+    phonetically correct drug names and normalise spoken numbers; the original
+    transcript is kept as each event's source_text for audit. ``captured_at``
+    anchors event time (falls back to now). If ``into_event`` is given (the
+    provisional placeholder), the first candidate fills it in place — preserving
+    its locked timestamp — and any extra candidates become new events."""
+    raw = text
+    if source == "asr":
+        text = normalize_numbers(correct_transcript(text))
+    live = [e for e in case_events(session, case.id)
+            if e.status != EventStatus.transcribing]
+    state = build_state(live)
     conventions = load_conventions(session, case.id)
+
+    cands = extract_candidates(text, state, case.weight_kg)
+    if not cands:
+        if into_event is not None:
+            _mark_unparsed(session, into_event, raw)
+        return None
+
+    when = captured_at if captured_at is not None else (
+        into_event.timestamp if into_event is not None else None)
     notice = None
-    for cand in extract_candidates(text, state, case.weight_kg):
+    for idx, cand in enumerate(cands):
+        cand.source_text = raw   # record what was heard, not the correction
         validate_candidate(cand, state, case.weight_kg, conventions)
-        ev = candidate_to_event(case, cand)
-        session.add(ev)
-        session.commit()
-        session.refresh(ev)
-        record_revision(session, ev, previous=None, new=event_to_dict(ev),
-                        by="model", reason="parsed from utterance")
-        # A spoken unit teaches the case convention and corrects earlier guesses.
-        scope = scope_of(ev.kind)
-        unit = (ev.dose_unit if scope == "bolus" else ev.rate_unit) if scope else None
-        if cand.unit_source == "explicit" and scope and unit and ev.drug:
-            if upsert_convention(session, case.id, ev.drug, scope, unit):
-                bf = backfill_unit(session, case.id, ev.drug, scope, unit)
-                pend = apply_convention_to_pending(
-                    session, case.id, ev.drug, scope, unit, exclude_id=ev.id)
-                notice = _learn_notice(ev.drug, unit, bf, pend) or notice
-            conventions[(ev.drug, scope)] = unit
+        if into_event is not None and idx == 0:
+            prev = event_to_dict(into_event)
+            _assign_candidate_fields(into_event, cand)
+            session.add(into_event); session.commit(); session.refresh(into_event)
+            record_revision(session, into_event, previous=prev,
+                            new=event_to_dict(into_event), by="model",
+                            reason="transcribed")
+            ev = into_event
+        else:
+            ev = candidate_to_event(case, cand, when=when)
+            session.add(ev); session.commit(); session.refresh(ev)
+            record_revision(session, ev, previous=None, new=event_to_dict(ev),
+                            by="model", reason="parsed from utterance")
+        notice = _learn_convention(session, case, ev, cand, conventions) or notice
     session.commit()
     return notice
 
 
 @app.post("/case/{case_id}/utterance", response_class=HTMLResponse)
 def add_utterance(case_id: int, request: Request, text: str = Form(...),
+                  source: str = Form("typed"), captured_at: str = Form(None),
                   session: Session = Depends(get_session)):
     case = get_case(session, case_id)
-    notice = process_utterance(session, case, text)
-    return board_response(request, session, case, notice=notice)
+    when = parse_client_ts(captured_at)
+    notice = process_utterance(session, case, text, source=source, captured_at=when)
+    resp = board_response(request, session, case, notice=notice)
+    # The on-device path renders the transcript client-side; hand it the corrected
+    # text so the user sees what was actually logged, not the raw mishear.
+    display = correct_transcript(text) if source == "asr" else text
+    resp.headers["X-Transcript"] = quote(display)
+    return resp
 
 
-# --- Pending queue actions -------------------------------------------------
+# --- Two-tier voice capture ------------------------------------------------
+@app.post("/case/{case_id}/utterance/provisional")
+def utterance_provisional(case_id: int, captured_at: str = Form(None),
+                          session: Session = Depends(get_session)):
+    """Instant tier: drop a timestamped placeholder into the log the moment speech
+    ends, before any transcription. Returns a JSON capture payload (rows + chart +
+    the new event id) for a surgical client update."""
+    case = get_case(session, case_id)
+    when = parse_client_ts(captured_at) or utcnow()
+    ev = Event(case_id=case.id, timestamp=when, kind=EventKind.bolus,
+               status=EventStatus.transcribing, created_by=CreatedBy.model)
+    session.add(ev); session.commit(); session.refresh(ev)
+    record_revision(session, ev, previous=None, new=event_to_dict(ev),
+                    by="model", reason="provisional capture")
+    session.commit()
+    return JSONResponse(capture_payload(session, case, focus_id=ev.id))
+
+
+@app.post("/case/{case_id}/utterance/{event_id}/audio")
+def utterance_audio(case_id: int, event_id: int, audio: str = Form(""),
+                    session: Session = Depends(get_session)):
+    """Accuracy tier: transcribe the uploaded audio (base64 WAV) and fill the
+    placeholder in place. Blocking ASR runs in FastAPI's threadpool, so several
+    can resolve while new placeholders keep appearing instantly. Returns a JSON
+    capture payload so the client patches only the affected rows + chart."""
+    case = get_case(session, case_id)
+    ev = session.get(Event, event_id)
+    if not case or not ev or ev.case_id != case_id:
+        return JSONResponse({"rows": [], "focus_id": None}, status_code=404)
+    data = base64.b64decode(audio) if audio else b""
+    text = get_asr().transcribe(data) if data else ""
+    notice = process_utterance(session, case, text, source="asr", into_event=ev)
+    return JSONResponse(capture_payload(
+        session, case, focus_id=event_id, notice=notice,
+        transcript=correct_transcript(text) if text else ""))
+
+
+# --- Row quick-actions -----------------------------------------------------
 @app.post("/case/{case_id}/events/{event_id}/accept", response_class=HTMLResponse)
 def accept_event(case_id: int, event_id: int, request: Request,
                  session: Session = Depends(get_session)):
@@ -485,6 +645,29 @@ def edit_form(case_id: int, event_id: int, request: Request,
     })
 
 
+@app.get("/case/{case_id}/events/{event_id}/edit-inline", response_class=HTMLResponse)
+def edit_row_inline(case_id: int, event_id: int, request: Request,
+                    session: Session = Depends(get_session)):
+    """Swap one timeline row into in-line edit mode."""
+    case = get_case(session, case_id)
+    ev = session.get(Event, event_id)
+    return templates.TemplateResponse(request, "partials/_event_row_edit.html", {
+        "request": request, "case": case, "event": ev,
+        "kinds": [k.value for k in EventKind],
+    })
+
+
+@app.get("/case/{case_id}/events/{event_id}/row", response_class=HTMLResponse)
+def event_row(case_id: int, event_id: int, request: Request,
+              session: Session = Depends(get_session)):
+    """Re-render one timeline row in view mode (used to cancel inline edit)."""
+    case = get_case(session, case_id)
+    ev = session.get(Event, event_id)
+    return templates.TemplateResponse(request, "partials/_event_row.html", {
+        "request": request, "case": case, "e": ev,
+    })
+
+
 def _parse_dt(value: str | None, tzname: str | None) -> datetime:
     """Parse a datetime-local value (naive, in the case tz) into UTC."""
     if not value:
@@ -549,7 +732,8 @@ def update_event(
     if ev:
         prev = event_to_dict(ev)
         ev.kind = EventKind(kind)
-        ev.timestamp = _parse_dt(timestamp, case.timezone)
+        if timestamp:  # never reset a captured timestamp to "now" on a blank field
+            ev.timestamp = _parse_dt(timestamp, case.timezone)
         ev.drug = drug or None
         ev.dose_value = _f(dose_value)
         ev.dose_unit = dose_unit or None
@@ -623,34 +807,6 @@ def export_csv(case_id: int, session: Session = Depends(get_session)):
         "Content-Disposition": f"attachment; filename=case_{case_id}.csv"})
 
 
-# --- Audio (WebSocket) -----------------------------------------------------
-def _handle_audio_chunk(case_id: int, data: bytes) -> dict:
-    """Transcribe one utterance and run it through the pipeline (own session)."""
-    text = get_asr().transcribe(data)
-    if not text.strip():
-        return {"transcript": "", "board": None, "notice": None}
-    with Session(engine) as session:
-        case = session.get(Case, case_id)
-        if not case:
-            return {"transcript": text, "board": None, "notice": None}
-        notice = process_utterance(session, case, text)
-        return {"transcript": text,
-                "board": render_board_str(session, case, notice),
-                "notice": notice}
-
-
-@app.websocket("/ws/case/{case_id}")
-async def ws_audio(websocket: WebSocket, case_id: int):
-    """Receive VAD-segmented audio utterances; push back transcript + board."""
-    await websocket.accept()
-    try:
-        while True:
-            data = await websocket.receive_bytes()
-            # Transcription + DB work is blocking → run off the event loop.
-            result = await run_in_threadpool(_handle_audio_chunk, case_id, data)
-            await websocket.send_json(result)
-    except WebSocketDisconnect:
-        return
 
 
 @app.get("/case/{case_id}/report", response_class=HTMLResponse)

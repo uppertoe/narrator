@@ -1,9 +1,15 @@
 """Speech-to-text behind a swappable interface — PHASE 3.
 
 Default backend is faster-whisper (CTranslate2) on CPU, biased toward the drug
-vocabulary via an initial prompt. The model is chosen with NARRATOR_WHISPER_MODEL
-(default base.en — small enough for a cheap CPU VPS; use small.en for accuracy).
-If the model can't load, falls back to a NullASR so the app still runs.
+vocabulary via hotwords. Recognition is the *async accuracy tier* (events are
+already in the log with a locked timestamp before transcription returns), and the
+phonetic corrector cleans drug names afterwards — so base.en is the default: fast
+and cheap enough for a single-core no-AVX2 VPS. NARRATOR_WHISPER_MODEL=small.en
+trades latency for accuracy on a capable box (the offline image bakes whatever
+the default is, so switching it for a container means re-baking). If the model
+can't load, falls back to NullASR so the app still runs. This whole class sits
+behind one swappable resolver — the planned hard grammar-constrained engine drops
+in here without touching callers.
 
 Audio arrives as raw bytes (whatever the browser MediaRecorder produced, e.g.
 webm/opus); faster-whisper decodes it via PyAV.

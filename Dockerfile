@@ -18,10 +18,8 @@ COPY static ./static
 # would re-sync and pull dev deps (e.g. playwright, ~136MB) back into the image.
 RUN .venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('base.en', device='cpu', compute_type='int8')"
 
-# Vendor the in-browser (transformers.js) Whisper model so it's served from our
-# own /static — on-device transcription with no third-party model fetch. Only the
-# q8-quantized encoder/decoder + configs (the files transformers.js needs).
-RUN .venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('onnx-community/whisper-tiny.en', local_dir='static/asr/models/onnx-community/whisper-tiny.en', allow_patterns=['*.json', 'onnx/encoder_model_quantized.onnx', 'onnx/decoder_model_merged_quantized.onnx'])"
+# (On-device/transformers.js model vendoring removed: recognition is now fully
+# server-side, so no in-browser model is shipped.)
 
 # --- runtime stage ---
 FROM python:3.13-slim
@@ -36,7 +34,7 @@ WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 COPY --from=build /opt/models /opt/models
 COPY app ./app
-# static comes from the build stage — it includes the vendored transformers.js model.
+# static = CSS/JS + vendored VAD assets (no ASR model; recognition is server-side).
 COPY --from=build /app/static ./static
 
 # Pre-create the data dir owned by the nonroot uid. An empty named volume mounted

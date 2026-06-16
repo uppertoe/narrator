@@ -1,0 +1,50 @@
+{#- One timeline row in inline-edit mode. All fields update_event reads are
+    present (visible or hidden) so saving never clobbers untouched data.
+    Expects `event`, `case`, `kinds`. -#}
+<article id="event-{{ event.id }}" class="ev ev-editing">
+  <form class="row-edit" hx-put="/case/{{ case.id }}/events/{{ event.id }}"
+        hx-target="#board" hx-swap="outerHTML">
+    <div class="row-edit-grid">
+      <label class="span2">Time
+        <input type="datetime-local" step="1" name="timestamp"
+               value="{{ event.timestamp|dtinput(case.timezone) }}">
+      </label>
+      <label>Type
+        <select name="kind">
+          {% for k in kinds %}
+          <option value="{{ k }}" {% if event.kind.value == k %}selected{% endif %}>{{ k }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Drug
+        <input name="drug" list="dl-drug-{{ event.id }}" value="{{ event.drug or '' }}" placeholder="drug">
+        <datalist id="dl-drug-{{ event.id }}">{% for d in DRUG_NAMES %}<option value="{{ d }}">{% endfor %}</datalist>
+      </label>
+      <label>Dose
+        <input name="dose_value" type="number" step="any"
+               value="{{ event.dose_value if event.dose_value is not none else '' }}">
+      </label>
+      <label>Dose unit
+        <input name="dose_unit" list="dl-dose-{{ event.id }}" value="{{ event.dose_unit or '' }}">
+        <datalist id="dl-dose-{{ event.id }}">{% for u in DOSE_UNITS %}<option value="{{ u }}">{% endfor %}</datalist>
+      </label>
+      <label>Rate
+        <input name="rate_value" type="number" step="any"
+               value="{{ event.rate_value if event.rate_value is not none else '' }}">
+      </label>
+      <label>Rate unit
+        <input name="rate_unit" list="dl-rate-{{ event.id }}" value="{{ event.rate_unit or '' }}">
+        <datalist id="dl-rate-{{ event.id }}">{% for u in RATE_UNITS %}<option value="{{ u }}">{% endfor %}</datalist>
+      </label>
+    </div>
+    {# preserve fields not shown inline so they aren't wiped #}
+    <input type="hidden" name="route" value="{{ event.route or 'IV' }}">
+    <input type="hidden" name="phase_label" value="{{ event.phase_label or '' }}">
+    <input type="hidden" name="note" value="{{ event.note or '' }}">
+    <div class="ev-actions">
+      <button type="submit" class="sm">Save</button>
+      <a class="sm outline secondary" hx-get="/case/{{ case.id }}/events/{{ event.id }}/row"
+         hx-target="#event-{{ event.id }}" hx-swap="outerHTML">Cancel</a>
+    </div>
+  </form>
+</article>

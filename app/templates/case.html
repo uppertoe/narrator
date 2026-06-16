@@ -29,9 +29,6 @@
 <div class="listen">
   <button type="button" id="listen-btn" class="outline" data-case-id="{{ case.id }}">● Listen</button>
   <span id="listen-status" class="muted">off</span>
-  <label class="local-asr muted" title="Transcribe in your browser instead of on the server — audio stays on this device">
-    <input type="checkbox" id="local-asr"> ⚡ on-device (beta)
-  </label>
   <span id="transcript" class="muted"></span>
 </div>
 <p class="hint muted">Click <em>Listen</em> once for hands-free capture — it auto-detects each utterance until you stop.</p>
@@ -40,6 +37,5 @@
 
 <script src="/static/vad/ort.wasm.min.js"></script>
 <script src="/static/vad/bundle.min.js"></script>
-<script type="module" src="/static/asr-local.js"></script>
 <script src="/static/audio.js"></script>
 {% endblock %}

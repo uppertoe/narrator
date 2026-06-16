@@ -58,12 +58,34 @@ td.nowrap, th.nowrap { white-space: nowrap; }
   padding: 0.4rem 0.55rem; margin-bottom: 0.4rem; font-size: 0.85rem;
 }
 .ev-pending { border-color: #f59e0b; background: #fffbeb; }
+.ev-transcribing { border-style: dashed; opacity: 0.85; }
+.ev-transcribing .spin { animation: ev-pulse 1.1s ease-in-out infinite; }
+@keyframes ev-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+.ev-editing { border-color: var(--pico-primary); }
+.row-edit-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.3rem 0.5rem;
+}
+.row-edit-grid label { font-size: 0.72rem; margin: 0; }
+.row-edit-grid label.span2 { grid-column: 1 / -1; }
+.row-edit-grid input, .row-edit-grid select {
+  width: 100%; min-width: 0; margin-bottom: 0;
+  font-size: 0.8rem; padding: 0.25rem 0.4rem; height: auto;
+}
+.row-edit .ev-actions { margin-top: 0.5rem; }
 .ev-main { display: flex; gap: 0.5rem; align-items: baseline; }
 .ev-time { font-variant-numeric: tabular-nums; color: #555; font-size: 0.78rem; }
 .ev-desc { flex: 1; }
-.ev-row-actions a { cursor: pointer; text-decoration: none; margin-left: 0.3rem; opacity: 0.6; }
-.ev-row-actions a:hover { opacity: 1; }
-.ev-row-actions a.flip { opacity: 0.9; font-size: 0.72rem; color: var(--pico-primary); }
+.ev-row-actions { display: inline-flex; align-items: center; gap: 0.1rem; flex: 0 0 auto; }
+.ev-act {
+  cursor: pointer; text-decoration: none; display: inline-flex; align-items: center;
+  gap: 0.2rem; padding: 0.3rem; border-radius: 6px; color: #475569; line-height: 0;
+}
+.ev-act:hover { background: var(--pico-muted-border-color); color: #0f172a; }
+.ev-act.confirm:hover { background: #dcfce7; color: #166534; }
+.ev-act.danger:hover { background: #fee2e2; color: #b91c1c; }
+.ev-act.flip { color: var(--pico-primary); line-height: 1; }
+.ev-act.flip span { font-size: 0.72rem; }
+.ic { width: 18px; height: 18px; fill: currentColor; display: block; }
 .ev-flag { color: #b45309; font-size: 0.75rem; margin: 0.25rem 0 0; }
 .ev-flag.subtle { color: #92400e; opacity: 0.7; }
 .ev-src { color: #666; font-style: italic; font-size: 0.75rem; margin: 0.2rem 0 0; }
