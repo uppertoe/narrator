@@ -116,15 +116,6 @@ def _find_unit(text: str, patterns) -> str | None:
     return None
 
 
-def _find_drug(text: str) -> str | None:
-    low = text.lower()
-    # Longest synonym first so multi-word names win.
-    for syn in sorted(SYNONYMS, key=len, reverse=True):
-        if re.search(rf"\b{re.escape(syn)}\b", low):
-            return resolve_drug(syn)
-    return None
-
-
 def _find_phase(text: str) -> str | None:
     low = text.lower()
     if "bypass" in low:
@@ -136,35 +127,45 @@ def _find_phase(text: str) -> str | None:
     return None
 
 
-def parse_utterance(text: str, state: CaseState) -> list[Candidate]:
-    """Best-effort parse of a single utterance into zero or more candidates."""
-    raw = text.strip()
-    low = raw.lower()
-    if not low:
-        return []
+def _find_all_drugs(low: str) -> list[tuple[int, str]]:
+    """Every drug mention as (position, canonical), de-duplicated with longest
+    match winning on overlap — so one utterance can carry several commands."""
+    matches: list[tuple[int, int, str]] = []
+    for syn in SYNONYMS:
+        for m in re.finditer(rf"\b{re.escape(syn)}\b", low):
+            matches.append((m.start(), m.end(), resolve_drug(syn)))
+    matches.sort(key=lambda x: (x[0], -(x[1] - x[0])))   # earliest, then longest
+    picked: list[tuple[int, str]] = []
+    last_end = -1
+    for start, end, canon in matches:
+        if start >= last_end:        # drop overlaps (e.g. "calcium" in "calcium chloride")
+            picked.append((start, canon))
+            last_end = end
+    return picked
 
-    # 1) Phase / procedural milestone
-    phase = _find_phase(low)
-    if phase and _find_drug(low) is None:
-        return [Candidate(kind=EventKind.phase, phase_label=phase,
-                          source_text=raw, confidence=0.7)]
 
-    drug = _find_drug(low)
+def _split_by_drugs(raw: str, drugs: list[tuple[int, str]]) -> list[tuple[str, str]]:
+    """One segment per drug — from each drug to the next — so a trailing number
+    stays with its drug ("propofol 20 | rocuronium 50"). Leading text before the
+    first drug ("give 20 of …") stays attached to it."""
+    out: list[tuple[str, str]] = []
+    for i, (pos, canon) in enumerate(drugs):
+        seg_start = 0 if i == 0 else pos
+        seg_end = drugs[i + 1][0] if i + 1 < len(drugs) else len(raw)
+        out.append((canon, raw[seg_start:seg_end].strip()))
+    return out
+
+
+def _parse_command(seg: str, drug: str, state: CaseState) -> Candidate:
+    """Parse a single drug-command segment (drug already identified)."""
+    low = seg.lower()
     number = _extract_number(low)
     rate_unit = _find_unit(low, _RATE_UNIT_PATTERNS)
     dose_unit = _find_unit(low, _DOSE_UNIT_PATTERNS)
 
-    # 2) Stop / off
-    if re.search(r"\b(stop|off|cease|ceased|discontinue)\b", low) and drug:
-        return [Candidate(kind=EventKind.infusion_stop, drug=drug,
-                          source_text=raw, confidence=0.8)]
-
-    # If no drug at all, we can't make a medication event.
-    if drug is None:
-        c = Candidate(kind=EventKind.bolus, source_text=raw, confidence=0.2)
-        c.requires_confirmation = True
-        c.ambiguity_reason = "Could not identify a drug"
-        return [c]
+    if re.search(r"\b(stop|off|cease|ceased|discontinue)\b", low):
+        return Candidate(kind=EventKind.infusion_stop, drug=drug,
+                         source_text=seg, confidence=0.8)
 
     running = state.running_infusion(drug)
     has_rate_kw = bool(re.search(
@@ -176,13 +177,9 @@ def parse_utterance(text: str, state: CaseState) -> list[Candidate]:
     # otherwise it's an inference and we'll offer a one-tap ↔ flip.
     kind_locked = bool(rate_unit or dose_unit or has_rate_kw or has_bolus_kw)
 
-    # See the resolution matrix in the README. Bolus vs. rate-change:
-    #   - explicit rate unit ("0.2 mcg/kg/min")          → rate
-    #   - explicit dose unit, no rate language ("10 mg")  → bolus
-    #   - rate language ("to", "up/down", "wean", …)      → rate
-    #   - bare number that reads as a rate (0.2)          → rate  (magnitude)
-    #   - bare number that reads as a bolus (10)          → bolus (magnitude)
-    # Missing units are filled with sensible defaults later (validate._fill_defaults).
+    # Resolution matrix (see README). Bolus vs. rate-change:
+    #   explicit rate unit → rate; explicit dose unit, no rate language → bolus;
+    #   rate language → rate; bare number → rate/bolus by magnitude.
     rate_intent = bool(rate_unit) or has_rate_kw
     if dose_unit and not rate_unit and not has_rate_kw:
         rate_intent = False
@@ -191,16 +188,35 @@ def parse_utterance(text: str, state: CaseState) -> list[Candidate]:
     if has_bolus_kw and not has_rate_kw and not rate_unit:
         rate_intent = False   # an explicit bolus word beats the magnitude guess
 
-    # 3) Infusion rate change / start (unit, if unspoken, is resolved in validate)
     if rate_intent:
         kind = EventKind.infusion_rate_change if running else EventKind.infusion_start
-        return [Candidate(
-            kind=kind, drug=drug, rate_value=number, rate_unit=rate_unit,
-            source_text=raw, confidence=0.7, kind_locked=kind_locked,
-        )]
+        return Candidate(kind=kind, drug=drug, rate_value=number, rate_unit=rate_unit,
+                         source_text=seg, confidence=0.7, kind_locked=kind_locked)
+    return Candidate(kind=EventKind.bolus, drug=drug, dose_value=number,
+                     dose_unit=dose_unit, source_text=seg, confidence=0.6,
+                     kind_locked=kind_locked)
 
-    # 4) Default: bolus
-    return [Candidate(
-        kind=EventKind.bolus, drug=drug, dose_value=number, dose_unit=dose_unit,
-        source_text=raw, confidence=0.6, kind_locked=kind_locked,
-    )]
+
+def parse_utterance(text: str, state: CaseState) -> list[Candidate]:
+    """Parse one utterance into zero or more candidate events.
+
+    Handles multiple commands in a single utterance (run-on, e.g.
+    "propofol 20 rocuronium 50") by splitting on drug boundaries — one event per
+    drug. A drugless utterance is a phase milestone or an unidentified row."""
+    raw = text.strip()
+    low = raw.lower()
+    if not low:
+        return []
+
+    drugs = _find_all_drugs(low)
+    if not drugs:
+        phase = _find_phase(low)
+        if phase:
+            return [Candidate(kind=EventKind.phase, phase_label=phase,
+                              source_text=raw, confidence=0.7)]
+        c = Candidate(kind=EventKind.bolus, source_text=raw, confidence=0.2)
+        c.requires_confirmation = True
+        c.ambiguity_reason = "Could not identify a drug"
+        return [c]
+
+    return [_parse_command(seg, drug, state) for drug, seg in _split_by_drugs(raw, drugs)]
