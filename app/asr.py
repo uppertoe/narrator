@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import io
 import os
+import threading
 from functools import lru_cache
 
 from app.drugs import DRUGS
@@ -58,6 +59,14 @@ class NullASR(ASR):
         return ""
 
 
+# Transcription is CPU-bound and the VPS is a single core. Running utterances
+# concurrently (FastAPI serves the sync route from a threadpool) just thrashes the
+# one core and inflates memory, so several quick orders all surface minutes later,
+# together. Serialise: one transcription at a time → each order surfaces as soon
+# as it's done (~Ns, 2N, 3N), and peak memory stays at one working set.
+_TRANSCRIBE_LOCK = threading.Lock()
+
+
 class FasterWhisperASR(ASR):
     available = True
 
@@ -66,14 +75,15 @@ class FasterWhisperASR(ASR):
         self.model = WhisperModel(model_size, device="cpu", compute_type="int8")
 
     def transcribe(self, audio: bytes) -> str:
-        segments, _info = self.model.transcribe(
-            io.BytesIO(audio),
-            language="en",
-            hotwords=HOTWORDS,     # bias toward drug names (see asr_bench.py)
-            vad_filter=True,
-            beam_size=WHISPER_BEAM,
-        )
-        return " ".join(s.text.strip() for s in segments).strip()
+        with _TRANSCRIBE_LOCK:
+            segments, _info = self.model.transcribe(
+                io.BytesIO(audio),
+                language="en",
+                hotwords=HOTWORDS,     # bias toward drug names (see asr_bench.py)
+                vad_filter=True,
+                beam_size=WHISPER_BEAM,
+            )
+            return " ".join(s.text.strip() for s in segments).strip()
 
 
 @lru_cache(maxsize=1)

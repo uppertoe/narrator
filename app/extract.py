@@ -21,7 +21,20 @@ from app.parse import Candidate, parse_utterance
 from app.state import CaseState
 
 MODEL = os.environ.get("NARRATOR_MODEL", "claude-haiku-4-5")
-USE_LLM = bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+
+def _use_llm() -> bool:
+    """LLM extraction adds a per-utterance Claude round-trip (~1.5–3.5s). The
+    deterministic parser now covers the common cases, so this is opt-out:
+    NARRATOR_USE_LLM=0 disables it even when a key is present (the key can stay
+    for other uses). Default: on when a key is set."""
+    flag = os.environ.get("NARRATOR_USE_LLM")
+    if flag is not None:
+        return flag.strip().lower() in ("1", "true", "yes", "on")
+    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+
+USE_LLM = _use_llm()
 
 _DOSE_UNITS = ["microgram", "microgram/kg", "milligram", "milligram/kg",
                "unit", "unit/kg", "mmol", "mmol/kg", "mL"]
