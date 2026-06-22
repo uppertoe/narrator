@@ -74,38 +74,43 @@ def _extract_number(text: str) -> float | None:
     return digit
 
 
-# Order matters: most specific unit phrases first. "_KG" accepts kg/kilo/kilogram.
-_KG = r"(?:kg|kilo(?:gram)?s?)"
+# Order matters: most specific unit phrases first. Unit bases below also accept
+# the spoken shorthand clinicians actually dictate — "mics"/"mic" for micrograms,
+# "kig" for kilo — which is what the ASR transcribes and what kept "per kilo" from
+# being recognised. `_NL` (no preceding letter) blocks mid-word matches like the
+# "mics" inside "dynamics" while still allowing digit-glued forms ("20mics").
+_NL = r"(?<![a-z])"
+_KG = r"(?:kg|kig|kilo(?:gram)?s?)"
+_UG = r"(?:micro\s*g(?:ram)?s?|mcg|mics?|µg)"   # incl. "mics"/"mic"
+_MG = r"m(?:illi)?g(?:ram)?s?"
+_ML = r"m(?:illi)?l(?:itre|iter)?s?"
+_PER = r"(?:/|per)"
+
 _RATE_UNIT_PATTERNS = [
-    (rf"micro\s*g(?:ram)?s?\s*(?:/|per)\s*{_KG}\s*(?:/|per)\s*min", "microgram/kg/min"),
-    (rf"mcg\s*(?:/|per)\s*{_KG}\s*(?:/|per)\s*min", "microgram/kg/min"),
-    (rf"micro\s*g(?:ram)?s?\s*(?:/|per)\s*{_KG}\s*(?:/|per)\s*h(?:ou)?r", "microgram/kg/hr"),
-    (rf"m(?:illi)?g(?:ram)?s?\s*(?:/|per)\s*{_KG}\s*(?:/|per)\s*h(?:ou)?r", "mg/kg/hr"),
-    (r"m(?:illi)?l(?:itre|iter)?s?\s*(?:/|per)\s*h(?:ou)?r", "mL/hr"),
-    (rf"units?\s*(?:/|per)\s*{_KG}\s*(?:/|per)\s*h(?:ou)?r", "unit/kg/hr"),
-    (r"units?\s*(?:/|per)\s*h(?:ou)?r", "unit/hr"),
-    (r"m(?:illi)?g(?:ram)?s?\s*(?:/|per)\s*h(?:ou)?r", "mg/hr"),
+    (rf"{_NL}{_UG}\s*{_PER}\s*{_KG}\s*{_PER}\s*min", "microgram/kg/min"),
+    (rf"{_NL}{_UG}\s*{_PER}\s*{_KG}\s*{_PER}\s*h(?:ou)?r", "microgram/kg/hr"),
+    (rf"{_NL}{_MG}\s*{_PER}\s*{_KG}\s*{_PER}\s*h(?:ou)?r", "mg/kg/hr"),
+    (rf"{_NL}{_ML}\s*{_PER}\s*h(?:ou)?r", "mL/hr"),
+    (rf"\bunits?\s*{_PER}\s*{_KG}\s*{_PER}\s*h(?:ou)?r", "unit/kg/hr"),
+    (rf"\bunits?\s*{_PER}\s*h(?:ou)?r", "unit/hr"),
+    (rf"{_NL}{_MG}\s*{_PER}\s*h(?:ou)?r", "mg/hr"),
     # Absolute (non-per-kg) forms — listed AFTER the /kg variants so those win.
-    (r"micro\s*g(?:ram)?s?\s*(?:/|per)\s*min", "microgram/min"),
-    (r"mcg\s*(?:/|per)\s*min", "microgram/min"),
-    (r"micro\s*g(?:ram)?s?\s*(?:/|per)\s*h(?:ou)?r", "microgram/hr"),
-    (r"mcg\s*(?:/|per)\s*h(?:ou)?r", "microgram/hr"),
+    (rf"{_NL}{_UG}\s*{_PER}\s*min", "microgram/min"),
+    (rf"{_NL}{_UG}\s*{_PER}\s*h(?:ou)?r", "microgram/hr"),
 ]
 
 _DOSE_UNIT_PATTERNS = [
-    # Per-kg dose forms first so "milligrams per kilo" → milligram/kg (not milligram).
-    (rf"micro\s*g(?:ram)?s?\s*(?:/|per)\s*{_KG}", "microgram/kg"),
-    (rf"mcg\s*(?:/|per)\s*{_KG}", "microgram/kg"),
-    (rf"m(?:illi)?g(?:ram)?s?\s*(?:/|per)\s*{_KG}", "milligram/kg"),
-    (rf"units?\s*(?:/|per)\s*{_KG}", "unit/kg"),
-    (rf"mmol\s*(?:/|per)\s*{_KG}", "mmol/kg"),
-    (r"micro\s*g(?:ram)?s?\b", "microgram"),
-    (r"mcg\b", "microgram"),
-    (r"m(?:illi)?g(?:ram)?s?\b", "milligram"),
+    # Per-kg dose forms first so "mics per kilo" → microgram/kg (not microgram).
+    (rf"{_NL}{_UG}\s*{_PER}\s*{_KG}", "microgram/kg"),
+    (rf"{_NL}{_MG}\s*{_PER}\s*{_KG}", "milligram/kg"),
+    (rf"\bunits?\s*{_PER}\s*{_KG}", "unit/kg"),
+    (rf"\bmmol\s*{_PER}\s*{_KG}", "mmol/kg"),
+    (rf"{_NL}{_UG}\b", "microgram"),
+    (rf"{_NL}{_MG}\b", "milligram"),
     (r"\bgrams?\b", "gram"),
     (r"\bunits?\b", "unit"),
     (r"\bmmol\b", "mmol"),
-    (r"m(?:illi)?l(?:itre|iter)?s?\b", "mL"),
+    (rf"{_NL}{_ML}\b", "mL"),
 ]
 
 
