@@ -132,31 +132,47 @@ def _find_phase(text: str) -> str | None:
     return None
 
 
-def _find_all_drugs(low: str) -> list[tuple[int, str]]:
-    """Every drug mention as (position, canonical), de-duplicated with longest
+def _find_all_drugs(low: str) -> list[tuple[int, int, str]]:
+    """Every drug mention as (start, end, canonical), de-duplicated with longest
     match winning on overlap — so one utterance can carry several commands."""
     matches: list[tuple[int, int, str]] = []
     for syn in SYNONYMS:
         for m in re.finditer(rf"\b{re.escape(syn)}\b", low):
             matches.append((m.start(), m.end(), resolve_drug(syn)))
     matches.sort(key=lambda x: (x[0], -(x[1] - x[0])))   # earliest, then longest
-    picked: list[tuple[int, str]] = []
+    picked: list[tuple[int, int, str]] = []
     last_end = -1
     for start, end, canon in matches:
         if start >= last_end:        # drop overlaps (e.g. "calcium" in "calcium chloride")
-            picked.append((start, canon))
+            picked.append((start, end, canon))
             last_end = end
     return picked
 
 
-def _split_by_drugs(raw: str, drugs: list[tuple[int, str]]) -> list[tuple[str, str]]:
-    """One segment per drug — from each drug to the next — so a trailing number
-    stays with its drug ("propofol 20 | rocuronium 50"). Leading text before the
-    first drug ("give 20 of …") stays attached to it."""
+def _dose_before_drug(low: str, drugs: list[tuple[int, int, str]]) -> bool:
+    """Does this utterance dictate the dose BEFORE the drug ("20 mics propofol")
+    rather than after ("propofol 20")? Decided by where the first number falls
+    relative to the first drug. The convention is consistent within an utterance,
+    so this orients the whole split."""
+    m = re.search(r"\d", low)
+    return bool(m and m.start() < drugs[0][0])
+
+
+def _split_by_drugs(raw: str, drugs: list[tuple[int, int, str]],
+                    dose_before: bool) -> list[tuple[str, str]]:
+    """One segment per drug, keeping each dose with its own drug. For dose-after,
+    a segment runs from each drug to the next ("propofol 20 | rocuronium 50"); for
+    dose-before, it runs from the previous drug to this one ("20 mics propofol |
+    30 mics adrenaline"). The first/last segment absorbs any leading/trailing text."""
+    n = len(drugs)
     out: list[tuple[str, str]] = []
-    for i, (pos, canon) in enumerate(drugs):
-        seg_start = 0 if i == 0 else pos
-        seg_end = drugs[i + 1][0] if i + 1 < len(drugs) else len(raw)
+    for i, (start, end, canon) in enumerate(drugs):
+        if dose_before:
+            seg_start = 0 if i == 0 else drugs[i - 1][1]      # previous drug's end
+            seg_end = len(raw) if i == n - 1 else end          # this drug's end
+        else:
+            seg_start = 0 if i == 0 else start                 # this drug's start
+            seg_end = len(raw) if i == n - 1 else drugs[i + 1][0]
         out.append((canon, raw[seg_start:seg_end].strip()))
     return out
 
@@ -224,4 +240,6 @@ def parse_utterance(text: str, state: CaseState) -> list[Candidate]:
         c.ambiguity_reason = "Could not identify a drug"
         return [c]
 
-    return [_parse_command(seg, drug, state) for drug, seg in _split_by_drugs(raw, drugs)]
+    dose_before = _dose_before_drug(low, drugs)
+    return [_parse_command(seg, drug, state)
+            for drug, seg in _split_by_drugs(raw, drugs, dose_before)]

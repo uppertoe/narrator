@@ -39,6 +39,18 @@ def test_mixed_stop_and_bolus_in_one_utterance():
     assert cs[1].kind.value == "bolus" and cs[1].dose_value == 20
 
 
+def test_dose_before_drug_run_on():
+    # "DOSE DRUG, DOSE DRUG" — each dose must stay with the drug it precedes
+    cs = _parse("2 mg per kilo propofol, 30 mics adrenaline")
+    assert _pairs(cs) == [("propofol", 2), ("adrenaline", 30)]
+    assert cs[0].dose_unit == "milligram/kg"
+    assert cs[1].dose_unit == "microgram"
+
+
+def test_dose_after_drug_run_on_still_works():
+    assert _pairs(_parse("propofol 20 rocuronium 50")) == [("propofol", 20), ("rocuronium", 50)]
+
+
 def test_drugless_utterance_not_split():
     assert len(_parse("the patient looks stable")) == 1   # single unidentified row
     assert _parse("bypass on")[0].kind.value == "phase"
