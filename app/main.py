@@ -28,6 +28,7 @@ from sqlmodel import Session, select
 from app.asr import get_asr
 from app.chart import render_chart, render_chart_combined
 from app.correct import correct_transcript
+from app.dose_correct import correct_dose_phrases
 from app.numbers import normalize_numbers
 from app.db import get_session, init_db
 from app.drugs import candidate_units, forms_and_band
@@ -429,7 +430,10 @@ def process_utterance(session: Session, case: Case, text: str,
     its locked timestamp — and any extra candidates become new events."""
     raw = text
     if source == "asr":
-        text = normalize_numbers(correct_transcript(text))
+        # drug names → de-hyphenate (ASR glues "20-mite") → numbers to digits →
+        # dose-vocabulary mishears ("20 marks per kilo" → "20 mics per kilo").
+        text = correct_transcript(text).replace("-", " ")
+        text = correct_dose_phrases(normalize_numbers(text))
     live = [e for e in case_events(session, case.id)
             if e.status != EventStatus.transcribing]
     state = build_state(live)
