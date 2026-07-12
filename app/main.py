@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import base64
 import csv
+import hashlib
 import io
 import json
 import mimetypes
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
+from pathlib import Path
 from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -55,6 +58,41 @@ mimetypes.add_type("application/wasm", ".wasm")
 app = FastAPI(title="Narrator", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
+
+STATIC_DIR = (Path(__file__).resolve().parent.parent / "static").resolve()
+
+
+@lru_cache(maxsize=256)
+def _asset_fingerprint(rel_path: str) -> str:
+    """First 8 hex of a static file's SHA-256, or "" if it is absent.
+
+    Cached for the process lifetime: under our read-only container the bytes
+    cannot change without a redeploy (which restarts the process and clears the
+    cache). Resolves and confines the path to STATIC_DIR.
+    """
+    file_path = (STATIC_DIR / rel_path).resolve()
+    if STATIC_DIR not in file_path.parents or not file_path.is_file():
+        return ""
+    return hashlib.sha256(file_path.read_bytes()).hexdigest()[:8]
+
+
+def asset(path: str) -> str:
+    """Cache-busted URL for a bundled static file.
+
+    ``asset("app.css")`` -> ``/static/app.css?v=<hash>``. The scaffold Caddy
+    layer recognises the ``?v=`` tag and serves the file with a one-year
+    ``immutable`` Cache-Control, so the browser never re-fetches it until the
+    bytes (hence the hash, hence the URL) change -- which matters most off the
+    RCH network, where every asset otherwise round-trips through the gateway. A
+    missing file degrades to a plain, un-versioned ``/static`` URL.
+    """
+    rel = path.lstrip("/")
+    fingerprint = _asset_fingerprint(rel)
+    url = f"/static/{rel}"
+    return f"{url}?v={fingerprint}" if fingerprint else url
+
+
+templates.env.globals["asset"] = asset
 
 DEFAULT_TZ = "Australia/Melbourne"
 TIMEZONES = [
