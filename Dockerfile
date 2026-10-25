@@ -31,6 +31,11 @@ ENV PYTHONUNBUFFERED=1 \
     NARRATOR_DATABASE_URL=sqlite:////data/narrator.db \
     NARRATOR_WHISPER_MODEL=base.en
 WORKDIR /app
+# The base image's system pip is never used at runtime (deps live in the uv
+# venv), and its vendored copies of certifi/urllib3/msgpack/setuptools carry
+# CVEs that scanners flag. Remove it, along with ensurepip's bundled wheel.
+RUN python -m pip uninstall -y pip \
+ && rm -rf /usr/local/lib/python3.*/ensurepip/_bundled
 COPY --from=build /app/.venv /app/.venv
 COPY --from=build /opt/models /opt/models
 COPY app ./app
