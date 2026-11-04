@@ -33,6 +33,7 @@ from app.chart import render_chart, render_chart_combined
 from app.correct import correct_transcript
 from app.dose_correct import correct_dose_phrases
 from app.numbers import normalize_numbers
+from app.origin_check import SameOriginMiddleware
 from app.db import get_session, init_db
 from app.drugs import candidate_units, forms_and_band
 from app.models import (
@@ -56,6 +57,9 @@ mimetypes.add_type("text/javascript", ".mjs")
 mimetypes.add_type("application/wasm", ".wasm")
 
 app = FastAPI(title="Narrator", lifespan=lifespan)
+# Refuse state-changing requests from other origins, including sibling
+# subdomains that SameSite=Lax treats as same-site. See app/origin_check.py.
+app.add_middleware(SameOriginMiddleware)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 

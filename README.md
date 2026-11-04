@@ -38,6 +38,7 @@ in an immutable audit trail.
 | `NARRATOR_MODEL` | `claude-haiku-4-5` | Extraction model. Set to `claude-sonnet-4-6` / `claude-opus-4-8` for higher accuracy. |
 | `NARRATOR_WHISPER_MODEL` | `base.en` | faster-whisper ASR model. `small.en` may help in real theatre noise. |
 | `NARRATOR_WHISPER_BEAM` | `5` | ASR beam size. |
+| `NARRATOR_PUBLIC_URL` | _(unset)_ | The app's public origin, such as `https://narrator.example.org`. The same-origin check compares a write's `Origin` header against this value. If it is unset, the check uses the request's `Host` and `X-Forwarded-Proto`. |
 
 ASR biases the decoder toward the drug names via faster-whisper `hotwords`
 (see `scripts/asr_bench.py` for the tuning benchmark — `base.en` + beam 5 +
