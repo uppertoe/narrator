@@ -11,7 +11,7 @@ services:
     # Template default. In your server repo, pin to a released tag by digest
     # (Renovate's pinDigests does this automatically), e.g.
     #   ghcr.io/uppertoe/narrator:v0.1.0@sha256:...
-    image: ghcr.io/uppertoe/narrator:latest
+    image: ghcr.io/uppertoe/narrator:latest@sha256:91335eb44a6ff3e7ad8ab5b312114c5fef9f83ba7a6a5d072d74f1a06567c2f2
     restart: unless-stopped
     # CIS Docker §5 runtime hardening. Binds only an internal port (:8000) behind
     # Caddy; writes only to the /data volume and a tmpfs /tmp.

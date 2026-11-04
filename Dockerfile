@@ -1,9 +1,9 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 
 # --- build stage: install deps with uv + bake the ASR model into the image ---
-FROM python:3.14-slim AS build
+FROM python:3.14-slim@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966 AS build
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy HF_HOME=/opt/models
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:latest@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 /uv /usr/local/bin/uv
 WORKDIR /app
 
 # Production deps only (faster-whisper, fastapi, uvicorn, …); cached on lockfile.
@@ -22,7 +22,7 @@ RUN .venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('
 # server-side, so no in-browser model is shipped.)
 
 # --- runtime stage ---
-FROM python:3.14-slim
+FROM python:3.14-slim@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     PATH="/app/.venv/bin:$PATH" \
